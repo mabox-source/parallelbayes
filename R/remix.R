@@ -13,7 +13,7 @@
 #' @param type an integer, either 1 or 2, specifying the weighting type to use. 
 #' 1 corresponds to ___, 2 (the default) corresponds to ___.
 #' @param keep.type1 logical. If \code{TRUE} the type 1 weights are returned as 
-#' well as the type 2 weights when \cod{algorithm = 2}. This is faster than 
+#' well as the type 2 weights when \code{type = 2}. This is faster than 
 #' computing the type 1 and type 2 weights separately.
 #' @param keep.unnormalised logical. If \code{TRUE} the unnormalised weights 
 #' are returned as well as the normalised.
@@ -22,6 +22,16 @@
 #' @param ncores an optional integer specifying the number of CPU cores to use 
 #' (see \code{\link[parallel]{makeCluster}}). The default, 1, signifies that 
 #' \code{parallel} will not be used.
+#'
+#' @return A list containing fields: \code{Hvec}, a vector of the number of 
+#' samples from each partial posterior; \code{wn.type_1} or \code{wn.type_2}, 
+#' the normalised weighted of type 1 or type 2, depending on the value of 
+#' \code{type}; \code{wn.type_1} additionally returned in \code{keep.type1} is 
+#' \code{TRUE}; and \code{w.type_1} and/or \code{w.type_2}, the corresponding 
+#' unnormalised weights, if \code{keep.unnormalised} is \code{TRUE}. Weights 
+#' are returned as lists of matrices with 1 column and rows corresponding to 
+#' sample. The list elements correspond to partial posterior (same as argument 
+#' \code{theta}).
 #'
 #' @export
 calc_weights <- function(
@@ -40,6 +50,7 @@ calc_weights <- function(
   #  Setup.
   
   if (!("list" %in% class(theta))) stop("theta must be a list!")
+  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
   if (class(x)[1] == "tbl_spark") {
     if (!require(sparklyr)) stop("sparklyr is required!")
     use_spark <- TRUE
@@ -80,7 +91,6 @@ calc_weights <- function(
   params <- list(
     use_spark = use_spark,
     use_parallel = use_parallel,
-    do_type_2 = do_type_2,
     # Pool samples into one matrix.
     theta = do.call(rbind, theta),
     H = H,
@@ -185,11 +195,11 @@ calc_weights <- function(
   ############################################################################
   # Output.
   out <- list()
-  if (algorithm == 2) {
+  if (type == 2) {
     if (keep.unnormalised) out$w.type_2 <- w.type_2
     out$wn.type_2 <- wn.type_2
   }
-  if (algorithm == 1 ZZ keep.type1) {
+  if (type == 1 || keep.type1) {
     if (keep.unnormalised) out$w.type_1 <- w.type_1
     out$wn.type_1 <- wn.type_1
   }
@@ -246,10 +256,80 @@ likelihood.worker <- function(df, context) {
 #' dimension of a parameter vector. Samples of the parameter vector are 
 #' weighted using the remix type 1 or type 2 importance weights.
 #'
+#' \code{FUN} should take a matrix argument and return a matrix. The argument 
+#' matrix should be a matrix of samples, just like the elements of 
+#' \code{theta}. The returned matrix can have any number of columns but should 
+#' have the same number of rows. The rows of both matrices correspond to 
+#' samples.
 #'
 #' @seealso \code{calc_weights}
-
-# lFUN only needs to return on the log scale - the argument does not need to be.
+#'
+#' @param theta a list of matrices, each containing samples of model parameters 
+#' from partial posterior distributions. Each matrix should have the same 
+#' number of columns, which correspond to model parameters (including 
+#' components of parameter vectors). Each list element corresponds to a single 
+#' partial posterior.
+#' @param wn a list of matrices, each containing normalised weights, one for 
+#' each sample in \code{theta} and obtained using the 
+#' \code{\link{calc_weights}} function.
+#'
+#' @return A vector of weighted sample means of \code{FUN}, approximating the 
+#' posterior expectation.
+#' @export
+remix.mean <- function(
+  theta,
+  wn,
+  FUN = identity,
+  type = 2,
+  Hvec = NULL
+) {
+  if (class(theta) != "list") stop("theta must be a list!")
+  if (class(wn) != "list") stop("wn must be a list!")
+  if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
+  if (any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
+  if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
+  
+  # In type 1 we need to add the mixture distribution weights (these are already 
+  # implicit in the type 2 weight definition).
+  if (type == 1) {
+    if (is.null(Hvec) {
+      Hvec <- sapply(theta, nrow)
+    } else if (length(Hvec) != length(theta)) {
+      stop("There should be one element of Hvec for each element of theta!")
+    }
+    l_mixture_weight <- log(Hvec) - log(sum(Hvec))
+    wn <- mapply(FUN = function(wi, m) {wi + m}, wn, l_mixture_weight, SIMPLIFY = FALSE)
+  }
+  
+  # Collect samples and weights.
+  theta <- abind::abind(theta, along = 1)
+  wn <- abind::abind(wn, along = 1)
+  
+  # Positivisation:
+  # The expectation is estimated as a weighted sum. This can be computed 
+  # without underflow if we take the log of FUN applied to theta. This requires 
+  # us to temporarily multiply negative function values by -1.
+  negatives <- FUN(theta) < 0
+  
+  # Apply FUN and take the weighted sum.
+  d <- ncol(negatives)
+  mu.hat <- rep(NA, d)
+  for (j in 1:d) {
+    if (any(negatives)) {
+      mu.hat[j] <- -exp(lrowsums(
+          log(FUN(-samples[negatives[,j],,drop = FALSE])) + wn[negatives[,j]]
+      ))
+    } else {mu.hat[j] <- 0}
+    if (any(!negatives)) {
+      mu.hat[j] <- mu.hat[j] + exp(lrowsums(
+          log(FUN(samples[!negatives[,j],,drop = FALSE])) + wn[!negatives[,j]]
+      ))
+    }
+  }
+  
+  return(mu.hat)
+}
 
 
 

@@ -1,5 +1,44 @@
 #' Calculate the remix algorithm sample importance weights
 #'
+#' Computes importance weights for the samples drawn from all partial posterior 
+#' distributions to form a pooled, weighted sample that can be used to 
+#' approximate expected values under the full data posterior distribution.
+#'
+#' Data \code{x} can be held in local memory or distributed on a cluster. 
+#' Distributed computation is performed using Spark interfaced with the 
+#' \code{sparklyr} package. In this case \code{x} is a Spark table, with each 
+#' part containing a matrix of data (a data "shard"). If \code{x} are held in 
+#' local memory it should be a list of matrices. In either case the matrices 
+#' must have the same number of columns but can have different numbers of rows.
+#'
+#' Argument \code{loglik} is a list containing log likelihoods. It should have 
+#' one element for each element of \code{x} (and \code{theta}), whose values 
+#' are log likelihoods for all samples using just the data in the corresponding 
+#' element of \code{x}. That is, each element of \code{loglik} contains log 
+#' likelihoods for all samples in all elements of \code{theta}, so each element 
+#' of \code{loglik} has the same number of rows, but computed using only a 
+#' single data shard. This argument should be used when data shards are held by 
+#' separate parties who are unable to communicate it to a single analyst, e.g. 
+#' for privacy reasons. In this situation, all samples \code{theta} should be 
+#' distributed amongst the data owners, who should compute the log likelihoods 
+#' separately and send those to the analyst.
+#'
+#' Argument \code{loglik.fun} is a function that returns the log likelihood of 
+#' parameter samples. It should have two arguments. The first is a matrix of 
+#' parameter samples in the same form as the elements of \code{theta}. The 
+#' second argument is a matrix of data in the same form as the elements of 
+#' \code{x}. The returned value is a vector of log likelihoods with one value 
+#' for each row of the first argument.
+#'
+#' Parameter samples \code{theta} should be sampled from the partial posterior 
+#' distributions using proper priors rather than the "fractionated" priors of 
+#' the consensus Monte Carlo algorithm of Scott et al 2016.
+#'
+#' @section References
+#' \itemize{
+#' \item{Scott, Steven L., Blocker, A.W., Bonassi, F.V., Chipman, H.A., George, E.I. and McCulloch, R.E., 2016. Bayes and big data: The consensus Monte Carlo algorithm. \emph{International Journal of Management Science and Engineering Management}, 11(2), pp.78-88.}
+#' }
+#'
 #' @param x either a list of matrices or a Spark table (class \code{tbl_spark}) 
 #' containing the partitioned data. If a list, each element corresponds to a 
 #' single part. If a Spark table, the first column of each element must be an 
@@ -9,9 +48,11 @@
 #' number of columns, which correspond to model parameters (including 
 #' components of parameter vectors). Each list element corresponds to a single 
 #' partial posterior.
-#' @param loglik the log likelihood function. See details.
+#' @param loglik an optional list of numeric vectors, or single column 
+#' matrices, whose values are log likelihoods. See details.
+#' @param loglik.fun the log likelihood function. Optional if \code{loglik} is 
+#' supplied. See details.
 #' @param type an integer, either 1 or 2, specifying the weighting type to use. 
-#' 1 corresponds to ___, 2 (the default) corresponds to ___.
 #' @param keep.type1 logical. If \code{TRUE} the type 1 weights are returned as 
 #' well as the type 2 weights when \code{type = 2}. This is faster than 
 #' computing the type 1 and type 2 weights separately.
@@ -34,10 +75,11 @@
 #' \code{theta}).
 #'
 #' @export
-calc_weights <- function(
+remix.weights <- function(
   x,
   theta,
-  loglik,
+  loglik = NULL,
+  loglik.fun,
   type = 2,
   keep.type1 = TRUE,
   keep.unnormalised = FALSE,
@@ -96,7 +138,7 @@ calc_weights <- function(
     H = H,
     Hvec = Hvec,
     pp_inds = pp_inds,
-    loglik = loglik,
+    loglik.fun = loglik.fun,
     d = d
   )
   
@@ -108,22 +150,26 @@ calc_weights <- function(
   # Result in a list with elements corresponding to data shards (elements of 
   # data x).
   if (verbose) message("Computing likelihoods...")
-  if (use_spark) {
-    spark.res <- spark_apply(x, likelihood.worker, context = params)
-    if (verbose) message("(Collecting...)")
-    local.res <- as.data.frame(spark.res)
-    # Split into list on the first column: data shard.
-    ll <- split(local.res[,-1], local.res[,1])
-    ll <- lapply(ll, as.matrix)
-  } else if (use_parallel) {
-    ll <- parLapply(par.clust, x, likelihood.worker, context = params)
+  if (is.null(loglik)) {
+    if (use_spark) {
+      spark.res <- spark_apply(x, likelihood.worker, context = params)
+      if (verbose) message("(Collecting...)")
+      local.res <- as.data.frame(spark.res)
+      # Split into list on the first column: data shard.
+      loglik <- split(local.res[,-1], local.res[,1])
+      loglik <- lapply(loglik, as.matrix)
+    } else if (use_parallel) {
+      loglik <- parLapply(par.clust, x, likelihood.worker, context = params)
+    } else {
+      loglik <- lapply(x, likelihood.worker, params)
+    }
+    if (verbose) message("Done.")
   } else {
-    ll <- lapply(x, likelihood.worker, params)
+    loglik <- lapply(loglik, FUN = as.matrix)
   }
-  if (verbose) message("Done.")
   
   # Concatenate list elements into array.
-  ll.array <- do.call(abind::abind, list(ll, along = 3))
+  ll.array <- do.call(abind::abind, list(loglik, along = 3))
   
   # Multiply likelihoods.
   if (verbose) message("Computing unnormalised posterior densities...")
@@ -224,7 +270,7 @@ calc_weights <- function(
 #' \item{\code{theta}: a matrix of all samples from the partial posteriors, 
 #' pooled.}
 #' \item{\code{use_spark}: logical. \code{TRUE} if a Spark cluster is available.}
-#' \item{\code{f}: the log likelihood function.}
+#' \item{\code{loglik.fun}: the log likelihood function.}
 #' }
 #'
 #' @param df a matrix or data.frame of data. If using Spark the first column 
@@ -243,18 +289,18 @@ likelihood.worker <- function(df, context) {
   if (context$use_spark) {
     # The shard label.
     ll.part[,1] <- df[1,1]
-    ll.part[,2] <- context$loglik(context$theta, as.matrix(df[-nrow(df),-1,drop = FALSE]))
+    ll.part[,2] <- context$loglik.fun(context$theta, as.matrix(df[-nrow(df),-1,drop = FALSE]))
   } else {
-    ll.part[,1] <- context$loglik(context$theta, df)
+    ll.part[,1] <- context$loglik.fun(context$theta, df)
   }
   ll.part
 }
 
 #' Monte Carlo estimate of the expectation of a univariate function
 #'
-#' Compute a Monte Carlo estimate of a one dimensional function applied to each 
-#' dimension of a parameter vector. Samples of the parameter vector are 
-#' weighted using the remix type 1 or type 2 importance weights.
+#' Compute a Monte Carlo estimate of the expectation of a function of model 
+#' parameters. Samples of the parameter vector are weighted using the remix 
+#' type 1 or type 2 importance weights.
 #'
 #' \code{FUN} should take a matrix argument and return a matrix. The argument 
 #' matrix should be a matrix of samples, just like the elements of 
@@ -262,7 +308,7 @@ likelihood.worker <- function(df, context) {
 #' have the same number of rows. The rows of both matrices correspond to 
 #' samples.
 #'
-#' @seealso \code{calc_weights}
+#' @seealso \code{remix.quantile}, \code{remix.weights}
 #'
 #' @param theta a list of matrices, each containing samples of model parameters 
 #' from partial posterior distributions. Each matrix should have the same 
@@ -271,7 +317,12 @@ likelihood.worker <- function(df, context) {
 #' partial posterior.
 #' @param wn a list of matrices, each containing normalised weights, one for 
 #' each sample in \code{theta} and obtained using the 
-#' \code{\link{calc_weights}} function.
+#' \code{\link{remix.weights}} function.
+#' @param FUN a matrix-valued function that we wish to estimate the expected 
+#' value of. See details.
+#' @param type an integer, either 1 or 2, specifying the weighting type used.
+#' @param Hvec an optional vector specifying the number of samples taken from 
+#' each partial posterior.
 #'
 #' @return A vector of weighted sample means of \code{FUN}, approximating the 
 #' posterior expectation.
@@ -293,7 +344,7 @@ remix.mean <- function(
   # In type 1 we need to add the mixture distribution weights (these are already 
   # implicit in the type 2 weight definition).
   if (type == 1) {
-    if (is.null(Hvec) {
+    if (is.null(Hvec)) {
       Hvec <- sapply(theta, nrow)
     } else if (length(Hvec) != length(theta)) {
       stop("There should be one element of Hvec for each element of theta!")
@@ -331,16 +382,121 @@ remix.mean <- function(
   return(mu.hat)
 }
 
+#' Monte Carlo estimate of a quantile of a univariate function
+#'
+#' Compute a Monte Carlo estimate of quantiles of a function of model 
+#' parameters. Samples of the parameter vector are weighted using the remix 
+#' type 1 or type 2 importance weights.
+#'
+#' Whilst \code{FUN} is matrix-valued, with possibly >1 columns, the estimated 
+#' quantiles returned are quantiles of each dimension of the function 
+#' separately, i.e. the marginals.
+#'
+#' \code{FUN} should take a matrix argument and return a matrix. The argument 
+#' matrix should be a matrix of samples, just like the elements of 
+#' \code{theta}. The returned matrix can have any number of columns but should 
+#' have the same number of rows. The rows of both matrices correspond to 
+#' samples.
+#'
+#' @seealso \code{remix.mean}, \code{remix.weights}
+#'
+#' @param theta a list of matrices, each containing samples of model parameters 
+#' from partial posterior distributions. Each matrix should have the same 
+#' number of columns, which correspond to model parameters (including 
+#' components of parameter vectors). Each list element corresponds to a single 
+#' partial posterior.
+#' @param prob a probability, in [0, 1], corresponding to the quantile of 
+#' \code{FUN} to be estimated.
+#' @param wn a list of matrices, each containing normalised weights, one for 
+#' each sample in \code{theta} and obtained using the 
+#' \code{\link{remix.weights}} function.
+#' @param FUN a matrix-valued function that we wish to estimate the expected 
+#' value of. See details.
+#' @param type an integer, either 1 or 2, specifying the weighting type used.
+#' @param tol a number specifying the tolerance level for convergence of 
+#' numerical root finding. See \code{\link{uniroot}} for details.
+#' @param Hvec an optional vector specifying the number of samples taken from 
+#' each partial posterior.
+#'
+#' @param A matrix with named rows matching the output of 
+#' \code{\link{uniroot}}, the first row of which contains the weighted 
+#' quantiles of \code{FUN}.
+#' @export
+remix.quantile <- function(
+  theta,
+  prob,
+  wn,
+  FUN = identity,
+  type = 2,
+  tol = .Machine$double.eps ^ 0.5,
+  Hvec = NULL
+) {
+  if (class(theta) != "list") stop("theta must be a list!")
+  if (class(wn) != "list") stop("wn must be a list!")
+  if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
+  if (any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
+  if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
+  
+  # In type 1 we need to add the mixture distribution weights (these are already 
+  # implicit in the type 2 weight definition).
+  if (type == 1) {
+    if (is.null(Hvec)) {
+      Hvec <- sapply(theta, nrow)
+    } else if (length(Hvec) != length(theta)) {
+      stop("There should be one element of Hvec for each element of theta!")
+    }
+    l_mixture_weight <- log(Hvec) - log(sum(Hvec))
+    wn <- mapply(FUN = function(wi, m) {wi + m}, wn, l_mixture_weight, SIMPLIFY = FALSE)
+  }
+  
+  # Collect samples and weights.
+  theta <- abind::abind(theta, along = 1)
+  wn <- abind::abind(wn, along = 1)
+
+  # Check dimension of function output.
+  d <- ncol(FUN(theta[1,,drop = FALSE]))
+
+  q.hat <- matrix(NA, 5, d, dimnames = list(c("root", "f.root", "iter", "init.it", "estim.prec")))
+  
+  mu.hat <- rep(NA, d)
+  for (j in 1:d) {
+    fs <- FUN(samples)[,j]
+    a <- min(fs)
+    fa <- lrowsums(wn[fs <= a]) - log(prob)
+    if (fa > 0) {
+      q.hat[,j] <- c(a, fa, 0, NA, 0)
+      next
+    }
+    b <- max(fs)
+    fb <- lrowsums(wn[fs <= b]) - log(prob)
+    if (fb < 0) {
+      q.hat[,j] <- c(b, fb, 0, NA, 0)
+      next
+    }
+    q.hat[,j] <- unsplit(uniroot(
+      function(z) {lrowsums(wn[fs <= z]) - log(prob)},
+      lower = a,
+      upper = b,
+      tol = tol
+    ), 1:5)
+  }
+  
+  return(q.hat)
+}
 
 
+
+#' Smooth the remix weights using the generalised Pareto distribution
+#'
 #' @section References
 #' \itemize{
+#' \item{Vehtari, A., Simpson, D., Gelman, A. Yao, Y. and Gabry, J., 2015. Pareto smoothed importance sampling. \emph{arXiv preprint arXiv: 1507.02646.}}
 #' \item{Vehtari, A., Gelman, A. and Gabry, J., 2017. Practical Bayesian model evaluation using leave-one-out cross-validation and WAIC. \emph{Statistics and computing}, 27(5), pp.1413-1432.}
 #' }
 #'
-
 #' @param psis logical. If \code{TRUE} the Pareto smoothed importance sampling 
-#' (PSIS) algorithm of Vehtari et al (2017) is applied to the raw importance 
+#' (PSIS) algorithm of Vehtari et al (2015) is applied to the raw importance 
 #' weights.
 #'
 #' @export

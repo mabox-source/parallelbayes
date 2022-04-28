@@ -30,8 +30,9 @@
 #' @param theta a list of matrices, each containing samples of model parameters 
 #' from partial posterior distributions. Each matrix should have the same 
 #' number of columns, which correspond to model parameters (including 
-#' components of parameter vectors). Each list element corresponds to a single 
-#' partial posterior.
+#' components of parameter vectors). They must also have the same number of 
+#' rows (same number of samples from each partial posterior). Each list element 
+#' corresponds to a single partial posterior.
 #' @param type an integer, either 1 or 2, specifying the weighting type to use. 
 #' 1: use constant weighting. 2: weight samples using the sample covariance 
 #' matrices of the partial posteriors.
@@ -44,9 +45,9 @@
 #' @param ncores an optional integer specifying the number of CPU cores to use 
 #' (see \code{\link[parallel]{makeCluster}}). The default, 1, signifies that 
 #' \code{parallel} will not be used.
-#' @param tol a number, the tolerance level for the reciprocal condition number 
-#' of the covariance matrix. If less than this, the covariances are ignored. 
-#' See details.
+#' @param cov.tol a number, the tolerance level for the reciprocal condition 
+#' number of the covariance matrix. If less than this, the covariances are 
+#' ignored. See details.
 #'
 #' @return A list with elements: \code{w}, list of weighting matrices used; 
 #' diagnostics \code{cov_used.partial} and \code{cov_used.pooled} (see 

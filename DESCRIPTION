@@ -9,10 +9,14 @@ Description: Implementation of the remix algorithm with examples. Remix
     parts distributed across nodes of a cluster or held by different parties.
 License: GPL (>=3)
 Imports:
-    abind
+    abind (>= 1.4-5)
+VignetteBuilder: knitr
 Suggests:
+    knitr,
+    rmarkdown,
     sparklyr,
-    MASS,
+    dplyr,
+    MASS (>= 7.3),
     mvtnorm,
     loo,
     BayesLogit

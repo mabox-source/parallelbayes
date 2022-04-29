@@ -1,0 +1,84 @@
+---
+title: "Remix examples with normal data"
+author: "Marc Box"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+bibliography: "references.bib"
+vignette: >
+  %\VignetteIndexEntry{Remix examples with normal data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# Remix examples with normal data
+
+There are two models to consider: one where data are uncorrelated (the 
+off-diagonal elements of the covariance matrix are zero) and one where the data 
+are correlated. In either case we can assume the covariance matrix is known, or 
+we can leave it as unknown and posit a prior distribution for it, as well as 
+for the mean.
+
+Here is an example with uncorrelated data and with
+
+* 2 dimensions
+* 5,000 observations
+* Mean $(5, -5)$
+* Variances $2.3, 1.7$
+
+```{r}
+d <- 2
+mu <- c(5, -5)
+Sigma <- diag(c(2.3, 1.7))
+n <- 5000
+
+x <- MASS::mvrnorm(n, mu, Sigma)
+```
+
+Randomly partition the data into $M = 4$ parts.
+
+```{r}
+M <- 4
+x.list <- partition(x, M, random = TRUE, balanced = TRUE)
+print(sapply(x.list, nrow))
+```
+
+Connect to Spark cluster (localhost) and distribute the parts.
+
+```{r}
+library(sparklyr)
+
+config <- spark_config()
+config$`sparklyr.cores.local` <- 8
+config$`sparklyr.shell.driver-memory` <- "8G"
+config$spark.dynamicAllocation.enabled <- "false"
+config$spark.executor.instances <- M
+
+sc <- spark_connect(
+  master = "local",
+  config = config
+)
+
+invoke(spark_context(sc), "getExecutorMemoryStatus")
+
+x.cluster.parts <- list()
+for (p in 1:M) x.cluster.parts[[p]] <- sdf_copy_to(sc, as.data.frame(cbind(p, x.list[[p]])), repartition = 1, overwrite = TRUE)
+# This creates a Spark table with M "partitions" (i.e. distributed parts).
+x.cluster <- do.call(sdf_bind_rows, x.cluster.parts)
+
+spark_apply(x.cluster, function(p) nrow(p), names = "n")
+spark_apply(x.cluster, function(p) tail(p, 2))
+```
+
+
+
+```{r}
+spark_disconnect(sc)
+```
+

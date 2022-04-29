@@ -188,7 +188,7 @@ remix.weights <- function(
   # Split only preserves dimensions on data.frames, so convert to df first.
   w.type_1 <- split(as.data.frame(w.type_1), params$pp_inds)
   w.type_1 <- lapply(w.type_1, as.matrix)
-  w.type_1 <- lapply(w.type_1. FUN = function(ww){dimnames(ww) <- NULL; ww})
+  w.type_1 <- lapply(w.type_1, FUN = function(ww){dimnames(ww) <- NULL; ww})
   names(w.type_1) <- NULL
   if (verbose) message("Done.")
   # List of vectors.

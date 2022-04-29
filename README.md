@@ -10,3 +10,21 @@ in the computation of the type 2 weights and we often want both for comparison.
 all weights: type 1, type 2, type 1 with PSIS and type 2 with PSIS, and there 
 is lots of shared computation in these. So now the PSIS transformation of the 
 weights is applied using function `pareto_smooth`, called AFTER `calc_weights`.
+
+## Spark notes
+
+* I have JRE version 11 installed. When first launching a Spark cluster with 
+`sparklyr` I got: "Java 11 is only supported for Spark 3.0.0+" (I had Spark 
+2.4.3 installed, by default). So installed Spark 3.1.2 using 
+`sparklyr::spark_install` (tried 3.2.x but got a bad URL error).
+* Spark Web UI accessed via http://localhost:4040
+* Currently in vignettes I am using `sdf_copy_to`, but `sdf_repartition` might 
+be better (requires Spark v2 or greater).
+* Launching a Spark cluster with exactly `M` executors: setting:
+
+```
+config$spark.dynamicAllocation.enabled <- "false"
+config$spark.executor.instances <- M
+```
+
+is not sufficient.

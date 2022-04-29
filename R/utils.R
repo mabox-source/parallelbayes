@@ -73,3 +73,74 @@ lrowsums <- function (x, dim = 1, na.rm = FALSE, drop. = FALSE) {
     if (drop.) s <- drop(s)
     return(s)
 }
+
+#' Partition matrix-like data into \code{r} parts
+#'
+#' Performs one of the following partitions: sequential (the first \code{n_i} 
+#' elements go into part \code{i}, etc), unbalanced random (random allocation 
+#' into parts which are allowed to have different size) or balanced random 
+#' (random allocation into parts of the same size).
+#'
+#' If \code{x} is a matrix the partition is of sets of rows.
+#'
+#' Alternatively an integer scalar \code{x} can be supplied, in which case the 
+#' partition is of the integers \code{1:x}.
+#'
+#' @param x a vector, matrix or data.frame of data to be partitioned.
+#' @param part a vector the same length as \code{x} of part labels that can be 
+#' used to specify how to partition \code{x}.
+#' @param r an integer, the required number of parts.
+#' @param part_weights a vector of length \code{r} specifying the relative 
+#' sizes of the parts or probability of part membership in the unbalanced 
+#' random allocation.
+#' @param random logical. If \code{TRUE}, elements of \code{x} are assigned to 
+#' parts at random.
+#' @param balanced logical. If \code{TRUE}, and if \code{random} is 
+#' \code{TRUE}, the parts will have the same number of elements (or as close as 
+#' possible). \code{part_weights} will be ignored.
+#' @return A list of nonintersecting subsets of \code{x}.
+#' @export
+partition <- function(x,
+    r = 2,
+    part = NULL,
+    part_weights = rep(1, r),
+    random = TRUE,
+    balanced = FALSE
+) {
+    orig_class <- class(x)
+    orig_names <- unique(c(names(x), colnames(x)))
+    x <- as.data.frame(x)
+    n <- nrow(x)
+    # If a scalar is supplied, partition the integers 1 to x.
+    if (n == 1) {
+	n <- unlist(x)
+	x <- as.data.frame(1:n)
+    }
+    if (is.null(part)) {
+	if (random && !balanced) {
+	    part <- factor(sample(1:r, n, replace = TRUE, prob = part_weights), levels = 1:r)
+	} else {
+	    part_count <- floor(n * part_weights / sum(part_weights))
+	    residue <- n - sum(part_count)
+	    # Add residue to randomly chosen parts with probabilities given by the 
+	    # part weights.
+	    if (residue > 0) part_count <- part_count + c(rmultinom(1, residue, part_weights))
+	    # Balanced random partition: just take random permutation of x first.
+	    if (random) {
+		x <- x[sample(1:n, n, replace = FALSE),,drop = FALSE]
+	    }
+	    part <- factor(rep(1:r, part_count), levels = 1:r)
+	}
+    }
+    p <- split(x, part, drop = FALSE)
+
+    if (orig_class == "matrix") {
+	p <- lapply(p, FUN = as.matrix)
+	p <- lapply(p, FUN = function(part) {colnames(part) = orig_names; part})
+    } else if (orig_class != "data.frame") {
+	p <- lapply(p, FUN = unlist)
+	p <- lapply(p, FUN = function(part) {names(part) = NULL; part})
+    }
+
+    return(p)
+}

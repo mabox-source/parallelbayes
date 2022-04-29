@@ -8,3 +8,11 @@ Description: Implementation of the remix algorithm with examples. Remix
     facilitates sample-based Bayesian inference when data are partitioned and 
     parts distributed across nodes of a cluster or held by different parties.
 License: GPL (>=3)
+Imports:
+    abind
+Suggests:
+    sparklyr,
+    MASS,
+    mvtnorm,
+    loo,
+    BayesLogit

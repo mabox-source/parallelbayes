@@ -25,6 +25,8 @@ are correlated. In either case we can assume the covariance matrix is known, or
 we can leave it as unknown and posit a prior distribution for it, as well as 
 for the mean.
 
+## Uncorrelated data
+
 Here is an example with uncorrelated data and with
 
 * 2 dimensions
@@ -37,6 +39,10 @@ d <- 2
 mu <- c(5, -5)
 Sigma <- diag(c(2.3, 1.7))
 n <- 5000
+
+# YYMMDDhhmm
+#set.seed(1907281047)
+set.seed(1909220951)
 
 x <- MASS::mvrnorm(n, mu, Sigma)
 ```
@@ -55,6 +61,11 @@ Connect to Spark cluster (localhost) and distribute the parts.
 library(sparklyr)
 
 config <- spark_config()
+config$spark.executor.memory <- "1125m"
+config$spark.executor.cores <- 1
+config$spark.executor.instances <- 2
+config$spark.dynamicAllocation.enabled <- FALSE
+
 config$`sparklyr.cores.local` <- 8
 config$`sparklyr.shell.driver-memory` <- "8G"
 config$spark.dynamicAllocation.enabled <- "false"
@@ -72,10 +83,118 @@ for (p in 1:M) x.cluster.parts[[p]] <- sdf_copy_to(sc, as.data.frame(cbind(p, x.
 # This creates a Spark table with M "partitions" (i.e. distributed parts).
 x.cluster <- do.call(sdf_bind_rows, x.cluster.parts)
 
+# Check a few things.
 spark_apply(x.cluster, function(p) nrow(p), names = "n")
 spark_apply(x.cluster, function(p) tail(p, 2))
+
+# Check number of partitions.
+sdf_num_partitions(x.cluster)
 ```
 
+### Inference with $\Sigma$ known
+
+#### Sample from full posterior
+
+Simulate from the full posterior, in local memory.
+
+```{r eval = FALSE}
+H <- 10000
+
+samples.full <- matrix(NA, H, d)
+
+x.bar <- colMeans(x)
+
+set.seed(1909220937)
+for (h in 1:H) {
+  samples.full[h,1:d] <- MASS::mvrnorm(1, x.bar, 1 / n * Sigma)
+}
+```
+
+#### Distributed sampling from partial posteriors
+
+In the sampling performed in this code block, we assume a Jeffreys prior for 
+$\mu$. Note this is not the same as the prior on p88 of Gelman et al, which is 
+the "independence-Jeffreys" prior.
+
+```{r}
+# Set master seed.
+set.seed(1909220948)
+# Seeds for each executor.
+# Default RNG algorithm (Mersenne-Twister) uses 32 bit integers.
+seeds <- sample.int(2^32 - 1, M) - 2^32 / 2
+
+# Context object sent to executors.
+ctx <- list(
+  d = d,
+  H = H,
+  Sigma = Sigma,
+  seeds = seeds
+)
+
+res.cluster <- spark_apply(x.cluster, function(df, context) {
+  samples.part <- matrix(NA, context$H, 1 + context$d) # The extra column is for the partition label.
+  # Add the partition label.
+  part <- df[1,1]
+  samples.part[,1] <- part
+
+  set.seed(context$seeds[part])
+
+  n <- nrow(df)
+  x.bar <- colMeans(df[,-1])
+
+  for (h in 1:context$H) {
+    samples.part[h,1 + 1:contextd] <- MASS::mvrnorm(1, x.bar, 1 / n * context$Sigma)
+  }
+
+  samples.part
+}, context = ctx)
+
+# Import results to local memory and convert to a list.
+res <- as.data.frame(res.cluster)
+samples.part <- split(res[,-1], res[,1])
+samples.part <- lapply(samples.part, FUN = as.matrix)
+```
+
+The fractionated prior is the same prior, so these samples can be used in all 
+pooling algorithms.
+
+### Inference with $\Sigma$ unknown
+
+Now let's try including $\Sigma$ in sampling.
+
+#### Computational notes
+
+There is no need to store every element of the covariance matrix: the upper and 
+lower triangles are identical, so we just store one of them. Our convention is 
+that we store the lower triangle, including the diagonal, and elements are 
+taken in columnwise order (column 1 first, from the first row, then column 2, 
+and so on). Samples of each element are stored in a matrix with one column for 
+each element.
+
+It will make likelihood evaluations for the remix algorithm easier if we store 
+samples of the symmetric square root of the precision matrix as well as the 
+covariance matrix.
+
+#### Sample from full posterior
+
+```{r eval = FALSE}
+H <- 10000
+
+samples.full <- matrix(NA, H, d)
+
+x.bar <- colMeans(x)
+
+set.seed(1909220937)
+for (h in 1:H) {
+  samples.full[h,1:d] <- MASS::mvrnorm(1, x.bar, 1 / n * Sigma)
+}
+```
+
+#### Distributed sampling from partial posteriors
+
+
+In the sampling in this code block, the prior for $\mu$ is the "fractionated" 
+version.
 
 
 ```{r}

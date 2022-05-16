@@ -27,4 +27,5 @@ config$spark.dynamicAllocation.enabled <- "false"
 config$spark.executor.instances <- M
 ```
 
-is not sufficient.
+is not sufficient. The configs required in local mode are different from those 
+on the cluster.

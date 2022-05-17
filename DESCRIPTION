@@ -17,6 +17,7 @@ Suggests:
     sparklyr,
     dplyr,
     MASS (>= 7.3),
+    MCMCpack,
     mvtnorm,
     loo,
     BayesLogit

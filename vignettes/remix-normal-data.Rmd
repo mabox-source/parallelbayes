@@ -112,9 +112,34 @@ for (h in 1:H) {
 
 #### Distributed sampling from partial posteriors
 
-In the sampling performed in this code block, we assume a Jeffreys prior for 
+In the sampling performed in this section, we assume a Jeffreys prior for 
 $\mu$. Note this is not the same as the prior on p88 of Gelman et al, which is 
 the "independence-Jeffreys" prior.
+
+Define the function to distribute. The fractionated prior is the same as the 
+proper prior, so this can be used for all pooling algorithms.
+
+```{r}
+f <- function(df, context) {
+  samples.part <- matrix(NA, context$H, 1 + context$d) # The extra column is for the partition label.
+  # Add the partition label.
+  part <- df[1,1]
+  samples.part[,1] <- part
+
+  set.seed(context$seeds[part])
+
+  n <- nrow(df)
+  x.bar <- colMeans(df[,-1])
+
+  for (h in 1:context$H) {
+    samples.part[h,1 + 1:contextd] <- MASS::mvrnorm(1, x.bar, 1 / n * context$Sigma)
+  }
+
+  samples.part
+}
+```
+
+Now run.
 
 ```{r}
 # Set master seed.
@@ -131,32 +156,13 @@ ctx <- list(
   seeds = seeds
 )
 
-res.cluster <- spark_apply(x.cluster, function(df, context) {
-  samples.part <- matrix(NA, context$H, 1 + context$d) # The extra column is for the partition label.
-  # Add the partition label.
-  part <- df[1,1]
-  samples.part[,1] <- part
-
-  set.seed(context$seeds[part])
-
-  n <- nrow(df)
-  x.bar <- colMeans(df[,-1])
-
-  for (h in 1:context$H) {
-    samples.part[h,1 + 1:contextd] <- MASS::mvrnorm(1, x.bar, 1 / n * context$Sigma)
-  }
-
-  samples.part
-}, context = ctx)
+res.cluster <- spark_apply(x.cluster, f, context = ctx)
 
 # Import results to local memory and convert to a list.
 res <- as.data.frame(res.cluster)
 samples.part <- split(res[,-1], res[,1])
 samples.part <- lapply(samples.part, FUN = as.matrix)
 ```
-
-The fractionated prior is the same prior, so these samples can be used in all 
-pooling algorithms.
 
 ### Inference with $\Sigma$ unknown
 
@@ -171,6 +177,7 @@ taken in columnwise order (column 1 first, from the first row, then column 2,
 and so on). Samples of each element are stored in a matrix with one column for 
 each element.
 
+OPTION:
 It will make likelihood evaluations for the remix algorithm easier if we store 
 samples of the symmetric square root of the precision matrix as well as the 
 covariance matrix.
@@ -180,21 +187,126 @@ covariance matrix.
 ```{r eval = FALSE}
 H <- 10000
 
-samples.full <- matrix(NA, H, d)
+# d elements for mean vector, d(d+1)/2 for lower triangle of covariance matrix.
+samples.full <- matrix(NA, H, d + d * (d + 1) / 2)
 
 x.bar <- colMeans(x)
+S <- crossprod(sweep(x, MARGIN = 2, STATS = x.bar, FUN = "-"))
+lower_triangle <- lower.tri(S, diag = TRUE)
 
-set.seed(1909220937)
+set.seed(1902241209)
 for (h in 1:H) {
-  samples.full[h,1:d] <- MASS::mvrnorm(1, x.bar, 1 / n * Sigma)
+  Sigma.sample <- MCMCpack::riwish(n, S)
+  samples.full[h,(d + 1):ncol(samples.full)] <- Sigma.sample[lower_triangle]
+  samples.full[h,1:d] <- MASS::mvrnorm(1, x.bar, 1 / n * Sigma.sample)
 }
 ```
 
 #### Distributed sampling from partial posteriors
 
+Function to distribute. In the supplied context the fractionated prior can be 
+requested using field `prior`.
 
-In the sampling in this code block, the prior for $\mu$ is the "fractionated" 
-version.
+```{r}
+f <- function(df, context) {
+  # d elements for mean vector, d(d+1)/2 for lower triangle of covariance matrix.
+  samples.part <- matrix(NA, context$H, 1 + context$d + context$d * (context$d + 1) / 2) # The extra column is for the partition label.
+  # Add the partition label.
+  part <- df[1,1]
+  samples.part[,1] <- part
+
+  set.seed(context$seeds[part])
+
+  use_fractionated_prior <- charmatch(tolower(context$prior), c("proper", "fractionated")) == 2
+
+  n <- nrow(df)
+  x.bar <- colMeans(df[,-1])
+  S <- crossprod(sweep(df[,-1], MARGIN = 2, STATS = x.bar, FUN = "-"))
+  lower_triangle <- lower.tri(S, diag = TRUE)
+
+  for (h in 1:context$H) {
+    if (use_fractionated_prior) {
+      Sigma.sample <- MCMCpack::riwish((context$d + 2) / context$M + n - context$d - 1, S)
+    } else {
+      Sigma.sample <- MCMCpack::riwish(n, S)
+    }
+    samples.full[h,1 + (d + 1):ncol(samples.full)] <- Sigma.sample[lower_triangle]
+    samples.part[h,1 + 1:contextd] <- MASS::mvrnorm(1, x.bar, 1 / n * context$Sigma)
+  }
+
+  samples.part
+}
+```
+
+Run using proper priors for $(\mu, \Sigma)$:
+
+```{r}
+# Set master seed.
+set.seed(1907281047)
+# Seeds for each executor.
+# Default RNG algorithm (Mersenne-Twister) uses 32 bit integers.
+seeds <- sample.int(2^32 - 1, M) - 2^32 / 2
+
+# Context object sent to executors.
+ctx <- list(
+  M = M,
+  d = d,
+  H = H,
+  Sigma = Sigma,
+  seeds = seeds,
+  prior = "proper"
+)
+res.cluster <- spark_apply(x.cluster, f, context = ctx)
+
+# Import results to local memory and convert to a list.
+res <- as.data.frame(res.cluster)
+samples.part <- split(res[,-1], res[,1])
+samples.part <- lapply(samples.part, FUN = as.matrix)
+```
+
+Now run using "fractionated" priors.
+
+```{r}
+# Set master seed.
+set.seed(2205171739)
+# Seeds for each executor.
+# Default RNG algorithm (Mersenne-Twister) uses 32 bit integers.
+seeds <- sample.int(2^32 - 1, M) - 2^32 / 2
+
+# Context object sent to executors.
+ctx <- list(
+  M = M,
+  d = d,
+  H = H,
+  Sigma = Sigma,
+  seeds = seeds,
+  prior = "fractionated"
+)
+res.cluster <- spark_apply(x.cluster, f, context = ctx)
+
+# Import results to local memory and convert to a list.
+res <- as.data.frame(res.cluster)
+samples.part.frac <- split(res[,-1], res[,1])
+samples.part.frac <- lapply(samples.part.frac, FUN = as.matrix)
+```
+
+[Here is a great time to make a plot of samples.]
+
+
+#### Pooling algorithms
+
+Here we define the log likelihood function, to be used by remix.
+
+```{r}
+loglik.fun <- function(theta, x, d = 2) {
+  H <- nrow(theta)
+  ll <- matrix(NA, H, 1)
+  v <- array(NA, dim = c(H, d, d))
+  # Indices for lower triangle, including diagonal.
+  cov.inds <- which(lower.tri(diag(d), diag = TRUE), arr.ind = TRUE)
+  v[c(outer(1:H, (cov.inds[,1] - 1) * H + (cov.inds[,2] - 1) * H * d, FUN = "+"))] <- theta[,(d + 1):ncol(theta)]
+}
+```
 
 
 ```{r}

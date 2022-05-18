@@ -164,6 +164,8 @@ samples.part <- split(res[,-1], res[,1])
 samples.part <- lapply(samples.part, FUN = as.matrix)
 ```
 
+
+
 ### Inference with $\Sigma$ unknown
 
 Now let's try including $\Sigma$ in sampling.
@@ -305,9 +307,212 @@ loglik.fun <- function(theta, x, d = 2) {
   # Indices for lower triangle, including diagonal.
   cov.inds <- which(lower.tri(diag(d), diag = TRUE), arr.ind = TRUE)
   v[c(outer(1:H, (cov.inds[,1] - 1) * H + (cov.inds[,2] - 1) * H * d, FUN = "+"))] <- theta[,(d + 1):ncol(theta)]
+  # Now copy the lower triangle to the upper triangle.
+  upper_triangle <- which(upper.tri(diag(d), diag = FALSE), arr.ind = TRUE)
+  lower_triangle <- which(lower.tri(diag(d), diag = FALSE), arr.ind = TRUE)
+  v[,upper_triangle[,1],upper_triangle[,2]] <- v[,lower_triangle[,1],lower_triangle[,2]]
+  for (h in 1:H) {
+    ll[h] <- sum(mvtnorm::dmvnorm(x, theta[h,1:d], v[i,,], log = TRUE))
+  }
+  ll
 }
 ```
 
+Remix.
+
+```{r}
+timer <- proc.time()
+remix.out <- remix.weights(
+  x.cluster,
+  samples.part,
+  loglik.fun = loglik.fun,
+  type = 2,
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+```
+
+Consensus Monte Carlo algorithm.
+
+```{r}
+timer <- proc.time()
+consensus1.out <- consensus.weights(
+  samples.part.frac,
+  type = 1,
+  return.pooled = TRUE
+)
+print(proc.time() - timer)
+
+timer <- proc.time()
+consensus2.out <- consensus.weights(
+  samples.part.frac,
+  type = 2,
+  return.pooled = TRUE
+)
+print(proc.time() - timer)
+```
+
+Density product estimators.
+
+```{r}
+timer <- proc.time()
+ndpe.out <- dpe.master(
+  samples.part.frac,
+  type = "ndpe",
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+
+timer <- proc.time()
+sdpe.out <- dpe.master(
+  samples.part.frac,
+  type = "sdpe",
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+```
+
+#### Posterior parameter estimates
+
+Here we compute the pooling algorithm estimates of the posterior mean, median, 
+2.5% quantile, 97.5% quantile and standard deviation of each model parameter 
+dimension.
+
+```{r}
+posterior.estimates <- list()
+```
+
+Full posterior sampling.
+
+```{r}
+posterior.estimates[["Vanilla"]] <- apply(
+  samples.full,
+  2,
+  FUN = function(theta) {
+    c(
+      "Mean" = mean(theta),
+      "Median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "Std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Naive pooling of partial posterior samples.
+
+```{r}
+posterior.estimates[["Naive"]] <- apply(
+  abind::abind(samples.part, along = 1),
+  2,
+  FUN = function(theta) {
+    c(
+      "Mean" = mean(theta),
+      "Median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "Std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Remix algorithm 1.
+
+```{r}
+posterior.estimates[["Remix 1"]] <- rbind(
+  "Mean" = remix.mean(samples.part, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec),
+  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
+  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
+  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",]
+)
+posterior.estimates[["Remix 1"]] <- rbind(
+  posterior.estimates[["Remix 1"]],
+  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]] ^ 2)
+)
+```
+
+Remix algorithm 2.
+
+```{r}
+posterior.estimates[["Remix 2"]] <- rbind(
+  "Mean" = remix.mean(samples.part, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec),
+  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
+  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
+  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",]
+)
+posterior.estimates[["Remix 2"]] <- rbind(
+  posterior.estimates[["Remix 2"]],
+  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]] ^ 2)
+)
+```
+
+Consensus Monte Carlo.
+
+```{r}
+posterior.estimates[["Consensus 1"]] <- apply(
+  consensus.out$theta.w.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+posterior.estimates[["Consensus 2"]] <- apply(
+  consensus.out$theta.w.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Density product estimators.
+
+```{r}
+posterior.estimates[["NDPE"]] <- apply(
+  ndpe.out$theta.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+posterior.estimates[["SDPE"]] <- apply(
+  sdpe.out$theta.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Close cluster.
 
 ```{r}
 spark_disconnect(sc)

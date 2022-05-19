@@ -24,11 +24,14 @@
 #' separately and send those to the analyst.
 #'
 #' Argument \code{loglik.fun} is a function that returns the log likelihood of 
-#' parameter samples. It should have two arguments. The first is a matrix of 
-#' parameter samples in the same form as the elements of \code{theta}. The 
-#' second argument is a matrix of data in the same form as the elements of 
-#' \code{x}. The returned value is a vector of log likelihoods with one value 
-#' for each row of the first argument.
+#' parameter samples. It should have two arguments and the \code{...} argument. 
+#' The first argument is a matrix of parameter samples in the same form as the 
+#' elements of \code{theta}. The second argument is a matrix of data in the 
+#' same form as the elements of \code{x}. The \code{...} should follow, and can 
+#' be used in the definition of \code{loglik.fun} using the \code{list(...)} 
+#' constuct. This allows additional named arguments to be supplied to the 
+#' likelihood function (e.g. additional parameters). The returned value is a 
+#' vector of log likelihoods with one value for each row of the first argument.
 #'
 #' Parameter samples \code{theta} should be sampled from the partial posterior 
 #' distributions using proper priors rather than the "fractionated" priors of 
@@ -63,6 +66,8 @@
 #' @param ncores an optional integer specifying the number of CPU cores to use 
 #' (see \code{\link[parallel]{makeCluster}}). The default, 1, signifies that 
 #' \code{parallel} will not be used.
+#' @param ... additional parameters to be supplied to the log likelihood 
+#' function. See details on \code{loglik.fun}.
 #'
 #' @return A list containing fields: \code{Hvec}, a vector of the number of 
 #' samples from each partial posterior; \code{wn.type_1} or \code{wn.type_2}, 
@@ -85,7 +90,8 @@ remix.weights <- function(
   keep.unnormalised = FALSE,
   par.clust = NULL,
   ncores = 1,
-  verbose = FALSE
+  verbose = FALSE,
+  ...
 ) {
 
   ##############################################################################
@@ -130,6 +136,13 @@ remix.weights <- function(
   
   
   # Parameter list for workers.
+  context <- list(
+    theta = do.call(rbind, theta),
+    use_spark = use_spark,
+    loglik.fun = loglik.fun,
+    args = list(...)
+  )
+  # Other parameters.
   params <- list(
     use_spark = use_spark,
     use_parallel = use_parallel,
@@ -152,16 +165,16 @@ remix.weights <- function(
   if (verbose) message("Computing likelihoods...")
   if (is.null(loglik)) {
     if (use_spark) {
-      spark.res <- spark_apply(x, likelihood.worker, context = params)
+      spark.res <- spark_apply(x, likelihood.worker, context = ctx)
       if (verbose) message("(Collecting...)")
       local.res <- as.data.frame(spark.res)
       # Split into list on the first column: data shard.
       loglik <- split(local.res[,-1], local.res[,1])
       loglik <- lapply(loglik, as.matrix)
     } else if (use_parallel) {
-      loglik <- parLapply(par.clust, x, likelihood.worker, context = params)
+      loglik <- parLapply(par.clust, x, likelihood.worker, context = ctx)
     } else {
-      loglik <- lapply(x, likelihood.worker, params)
+      loglik <- lapply(x, likelihood.worker, ctx)
     }
     if (verbose) message("Done.")
   } else {
@@ -271,6 +284,8 @@ remix.weights <- function(
 #' pooled.}
 #' \item{\code{use_spark}: logical. \code{TRUE} if a Spark cluster is available.}
 #' \item{\code{loglik.fun}: the log likelihood function.}
+#' \item{\code{args}: a list of additional arguments to the log likelihood 
+#' function. This list can be empty.}
 #' }
 #'
 #' @param df a matrix or data.frame of data. If using Spark the first column 
@@ -289,9 +304,9 @@ likelihood.worker <- function(df, context) {
   if (context$use_spark) {
     # The shard label.
     ll.part[,1] <- df[1,1]
-    ll.part[,2] <- context$loglik.fun(context$theta, as.matrix(df[-nrow(df),-1,drop = FALSE]))
+    ll.part[,2] <- do.call(context$loglik.fun, c(list(context$theta, as.matrix(df[-nrow(df),-1,drop = FALSE])), context$args))
   } else {
-    ll.part[,1] <- context$loglik.fun(context$theta, df)
+    ll.part[,1] <- do.call(context$loglik.fun, c(list(context$theta, df), context$args))
   }
   ll.part
 }

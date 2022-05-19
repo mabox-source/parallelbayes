@@ -1,0 +1,109 @@
+---
+title: "Remix Examples in the Beta-Bernoulli Model"
+author: "Marc Box"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+bibliography: "references.bib"
+vignette: >
+  %\VignetteIndexEntry{Remix Examples in the Beta-Bernoulli Model}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# Remix Examples in the Beta-Bernoulli Model
+
+The beta-Bernoulli model is 
+
+This is an example used in Scott et al 2016. Binary data is simulated and we 
+infer the rate parameter of a Bernoulli model, specifying a beta distribution 
+pior.
+
+The posterior distribution in Scott et al 2016's example is positively skewed, 
+and so non-normal, presenting a particular challenge for the Consensus 
+algorithm. We will show that this is not a challenge for the remix algorithm, 
+which we contend is because we are able to use the intended, and proper, prior 
+distribution rather than the "fractionated" version.
+
+First we will look at the specific example of Scott et al 2016. Then we will 
+look at a more general example with a different rate parameter.
+
+## The example from Scott et al 2016
+
+Scott et al 2016's data set consists of 1,000 binary observations including a 
+single success and 999 failures. These are partitioned into 100 data shards.
+
+This is an interesting test for distributed computation because the success 
+outcome will only be observed in one shard. The question is how well are we 
+able to reproduce the infereces we would have made if all 1,000 observations 
+had been accessible to our posterior sampling routine.
+
+```{r}
+n <- 1000
+n_success <- 1
+x <- c(rep(0, n - n_success), rep(1, n_success))
+```
+
+Partition the data into $M = 100$ shards.
+
+```{r}
+M <- 100
+x.list <- partition(x, M, random = TRUE, balanced = TRUE)
+```
+
+OPTIONAL:
+Connect to Spark cluster (localhost) and distribute the parts.
+
+```{r}
+library(sparklyr)
+
+config <- spark_config()
+config$spark.executor.memory <- "1125m"
+config$spark.executor.cores <- 1
+config$spark.executor.instances <- 2
+config$spark.dynamicAllocation.enabled <- FALSE
+
+config$`sparklyr.cores.local` <- 8
+config$`sparklyr.shell.driver-memory` <- "8G"
+config$spark.dynamicAllocation.enabled <- "false"
+config$spark.executor.instances <- M
+
+sc <- spark_connect(
+  master = "local",
+  config = config
+)
+
+invoke(spark_context(sc), "getExecutorMemoryStatus")
+
+x.cluster.parts <- list()
+for (p in 1:M) x.cluster.parts[[p]] <- sdf_copy_to(sc, as.data.frame(cbind(p, x.list[[p]])), repartition = 1, overwrite = TRUE)
+# This creates a Spark table with M "partitions" (i.e. distributed parts).
+x.cluster <- do.call(sdf_bind_rows, x.cluster.parts)
+
+# Check a few things.
+spark_apply(x.cluster, function(p) nrow(p), names = "n")
+spark_apply(x.cluster, function(p) tail(p, 2))
+
+# Check number of partitions.
+sdf_num_partitions(x.cluster)
+```
+
+## Sample from the posterior distribution
+
+
+## Pooling algorithms
+
+
+
+Close cluster.
+
+```{r}
+spark_disconnect(sc)
+```
+

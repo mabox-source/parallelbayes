@@ -20,4 +20,5 @@ Suggests:
     MCMCpack,
     mvtnorm,
     loo,
-    BayesLogit
+    BayesLogit,
+    ggplot2

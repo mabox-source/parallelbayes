@@ -1,0 +1,27 @@
+---
+title: "Remix in a Small Logistic Regression Example"
+author: "Marc Box"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+bibliography: "references.bib"
+vignette: >
+  %\VignetteIndexEntry{Remix in a Small Logistic Regression Example}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# Remix in a Small Logistic Regression Example
+
+In this vignette we reproduce the logistic regression example from Scott et al 
+2016 with a small, artificial data set. The data are stored as package data.
+
+```{r}
+data(scott_logistic)
+```

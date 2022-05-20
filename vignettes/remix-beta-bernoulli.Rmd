@@ -57,10 +57,13 @@ M <- 100
 x.list <- partition(x, M, random = TRUE, balanced = TRUE)
 ```
 
-OPTIONAL:
-Connect to Spark cluster (localhost) and distribute the parts.
+### Option: distribute data shards to Spark cluster
 
-```{r}
+This block is not run. It merely demonstrates how the data could be distributed 
+using Spark.
+
+```{r eval = FALSE}
+# NOT RUN
 library(sparklyr)
 
 config <- spark_config()
@@ -96,14 +99,826 @@ sdf_num_partitions(x.cluster)
 
 ## Sample from the posterior distribution
 
+Here we draw 10,000 samples from the full posterior distribution and 
+$\frac{10,000}{M}$ from each of the partial posterior distributions. There are 
+three partial posterior distributions we could draw from, defined by their 
+different prior distributions. These are:
+
+1. The unmodified beta prior distribution described above.
+2. The fractionated version of the prior distribution proposed by Scott et al 
+2016.
+3. The fractionated version of the prior distribution obtained by taking the 
+$M^\textrm{th}$ root of the unnormalised beta prior density.
+
+When the beta prior is $\text{rm{Beta}(1,1)$, the third option is identical to 
+the first. So in this example there are only two partial posteriors.
+
+The entropy (in nats) of the beta prior is
+
+```{r}
+lbeta(a, b) - (a - 1) * digamma(a) - (b - 1) * digamma(b) + (a + b - 2) * digamma(a + b)
+```
+
+Here we sample from the full posterior distribution.
+
+```{r}
+H <- 10000
+# Beta prior parameters.
+a <- 1
+b <- 1
+
+a.post <- a + sum(x)
+b.post <- b + n - sum(x)
+samples.full <- rbeta(H, a.post, b.post)
+```
+
+Here we sample from the partial posterior defined with the unmodified beta 
+prior.
+
+```{r}
+samples.part <- lapply(x.list, FUN = function(xi) {
+    a.post = a + sum(xi)
+    b.post = b + n - sum(xi)
+    matrix(rbeta(ceiling(H / M), a.post, b.post), ceiling(H / M), 1)
+})
+```
+
+And here we sample from the partial posterior defined with the fractionated 
+prior.
+
+```{r}
+samples.part.frac <- lapply(x.list, FUN = function(xi) {
+    a.post = a / M + sum(xi)
+    b.post = b / M + n - sum(xi)
+    matrix(rbeta(ceiling(H / M), a.post, b.post), ceiling(H / M), 1)
+})
+```
+
+This is what the true posterior looks like.
+
+```{r}
+x.grid <- qbeta(seq(1e-6, 1 - 1e-6, by = 1e-6), a.post, b.post, log.p = TRUE)
+posterior_plot_data <- data.frame(
+  Lambda = c(x.grid),
+  Density = dbeta(x.grid, a.post, b.post),
+  Series = rep("Posterior", length(x.grid))
+)
+ggplot2::ggplot(posterior_plot_data, ggplot2::aes(x = Lambda, y = Density)) +
+ggplot2::geom_line() +
+ggplot2::scale_x_continuous(name = expression(lambda)) +
+ggplot2::theme_bw(base_size = 8) +
+ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
+```
+
+The posterior mean is
+
+```{r}
+a.post / (a.post + b.post)
+```
+
+And the posterior variance is
+
+```{r}
+a.post * b.post / (a.post + b.post) ^ 2 / (a.post + b.post + 1)
+```
+
+Plotting the samples.
+
+```{r}
+dens <- density(samples.full)
+plot_data <- rbind(posterior_plot_data, data.frame(
+  Lambda = dens$x[dens$x >= 0 & dens$x <= 1],
+  Density = dens$y[dens$x >= 0 & dens$x <= 1],
+  Series = rep("Posterior samples", sum(dens$x >= 0 & dens$x <= 1))
+))
+ggplot2::ggplot(plot_data, ggplot2::aes(x = Lambda, y = Density, linetype = Series)) +
+ggplot2::geom_line() +
+ggplot2::scale_x_continuous(name = expression(lambda)) +
+ggplot2::scale_linetype_manual(values = c("Posterior" = "solid", "Posterior samples" = "dotted")) +
+ggplot2::theme_bw(base_size = 8) +
+ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
+```
+
 
 ## Pooling algorithms
 
-
-
-Close cluster.
+Here we define the log likelihood function, to be used by remix.
 
 ```{r}
+loglik.fun <- function(theta, x, mem.limit = 1024^3) {
+  H <- nrow(theta)
+  n <- length(x)
+  ll <- matrix(0, H, 1)
+  mem.req <- 2 * n * H * 8
+  n_chunks <- ceiling(mem.req / mem.limit)
+  Hk <- ceiling(H / n_chunks)
+  for (k in 1:n_chunks) {
+    chunk.inds <- ((k - 1) * Hk + 1):min(k * Hk, H)
+    ll[,1] <- ll[,1] + .rowSums(
+      outer(log(theta[chunk.inds,]), x),
+      length(chunk.inds),
+      n
+    )
+  }
+  ll
+}
+```
+
+Remix.
+
+```{r}
+timer <- proc.time()
+remix.out <- remix.weights(
+  x.list,
+  samples.part,
+  loglik.fun = loglik.fun,
+  type = 2,
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+```
+
+Consensus Monte Carlo algorithm.
+
+```{r}
+timer <- proc.time()
+consensus1.out <- consensus.weights(
+  samples.part.frac,
+  type = 1,
+  return.pooled = TRUE
+)
+print(proc.time() - timer)
+
+timer <- proc.time()
+consensus2.out <- consensus.weights(
+  samples.part.frac,
+  type = 2,
+  return.pooled = TRUE
+)
+print(proc.time() - timer)
+```
+
+Density product estimators.
+
+```{r}
+timer <- proc.time()
+ndpe.out <- dpe.master(
+  samples.part.frac,
+  type = "ndpe",
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+
+timer <- proc.time()
+sdpe.out <- dpe.master(
+  samples.part.frac,
+  type = "sdpe",
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+```
+
+Plot the remix and consensus algorithm approximations of the posterior density.
+
+```{r}
+dens <- density(consensus2.out$theta.w.pooled)
+plot_data <- rbind(posterior_plot_data, data.frame(
+  Lambda = dens$x[dens$x >= 0 & dens$x <= 1],
+  Density = dens$y[dens$x >= 0 & dens$x <= 1],
+  Series = rep("Consensus (weighted)", sum(dens$x >= 0 & dens$x <= 1))
+))
+
+x.grid <- seq(quantile(samples.full, prob = 1e-4), quantile(samples.full, prob = 1 - 1e-4), by = dens$bw)
+dens.remix <- remix.kde(
+  x.grid,
+  samples.part,
+  remix.out$wn.type_2,
+  bw = dens$bw
+)
+plot_data <- rbind(plot_data, data.frame(
+  Lambda = x.grid,
+  Density = dens.remix,
+  Series = rep("Remix (type 2)", length(x.grid))
+))
+
+ggplot2::ggplot(plot_data, ggplot2::aes(x = Lambda, y = Density, linetype = Series)) +
+ggplot2::geom_line() +
+ggplot2::scale_x_continuous(name = expression(lambda)) +
+ggplot2::scale_linetype_manual(values = c("Posterior" = "solid", "Consensus (weighted)" = "dotted", "Remix (type 2)" = "dashed")) +
+ggplot2::theme_bw(base_size = 8) +
+ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
+```
+
+Here is a quantile-quantile plot for the consensus and remix algorithms.
+
+```{r}
+# True posterior quantiles.
+p.grid <- c(
+  exp(seq(log(1e-6), log(0.5), by = 1e-4)),
+  1 - exp(seq(log(1e-6), log(0.5), by = 1e-4))
+)
+q.post <- qbeta(p.grid, a.post, b.post)
+
+# Consensus estimates.
+qq_data <- data.frame(
+  Posterior_Quantile = q.post,
+  Estimated_Quantile = quantile(consensus2.out$theta.w.pooled, probs = p.grid),
+  Series = rep("Consensus (weighted)", length(p.grid))
+)
+
+# Remix estimates.
+p.remix <- cumsum(exp(unlist(remix.out$wn.type_2)[order(unlist(samples.part))]))
+q.remix <- sort(unlist(samples.part))[findInterval(p.grid, p,remix, all.inside = TRUE)]
+qq_data <- rbind(qq_data, data.frame(
+  Posterior_Quantile = q.post,
+  Estimated_Quantile = q.remix,
+  Series = rep("Remix (type 2)", length(p.grid))
+))
+
+# Add diagonal?
+# qq_data <- rbind(qq_data, data.frame(
+#  Posterior_Quantile = q.post,
+#  Estimated_Quantile = q.post,
+#  Series = rep("Identity", length(p.grid))
+#)
+
+ggplot2::ggplot(qq_data, ggplot2::aes(x = Posterior_Quantile, y = Estimated_Quantile, linetype = Series)) +
+ggplot2::geom_line() +
+ggplot2::scale_x_continuous(name = "Posterior quantile") +
+ggplot2::scale_y_continuous(name = "Estimated quantile") +
+ggplot2::scale_linetype_manual(values = c("Consensus (weighted)" = "dotted", "Remix (type 2)" = "dashed")) +
+ggplot2::theme_bw(base_size = 8) +
+ggplot2::theme(
+  panel.grid.minor = ggplot2::element_blank(),
+  panel.grid.major = ggplot2::element_blank()
+  legend.position= c(1 - 0.8, 0.75),
+  legend.title = ggplot2::element_blank()
+)
+```
+
+
+### Posterior parameter estimates
+
+Here we compute the pooling algorithm estimates of the posterior mean, median, 
+2.5% quantile, 97.5% quantile and standard deviation of each model parameter 
+dimension.
+
+```{r}
+posterior.estimates <- list()
+```
+
+Full posterior sampling.
+
+```{r}
+posterior.estimates[["Vanilla"]] <- apply(
+  samples.full,
+  2,
+  FUN = function(theta) {
+    c(
+      "Mean" = mean(theta),
+      "Median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "Std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Naive pooling of partial posterior samples.
+
+```{r}
+posterior.estimates[["Naive"]] <- apply(
+  abind::abind(samples.part, along = 1),
+  2,
+  FUN = function(theta) {
+    c(
+      "Mean" = mean(theta),
+      "Median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "Std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Remix algorithm 1.
+
+```{r}
+posterior.estimates[["Remix 1"]] <- rbind(
+  "Mean" = remix.mean(samples.part, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec),
+  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
+  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
+  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",]
+)
+posterior.estimates[["Remix 1"]] <- rbind(
+  posterior.estimates[["Remix 1"]],
+  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]] ^ 2)
+)
+```
+
+Remix algorithm 2.
+
+```{r}
+posterior.estimates[["Remix 2"]] <- rbind(
+  "Mean" = remix.mean(samples.part, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec),
+  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
+  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
+  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",]
+)
+posterior.estimates[["Remix 2"]] <- rbind(
+  posterior.estimates[["Remix 2"]],
+  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]] ^ 2)
+)
+```
+
+Consensus Monte Carlo.
+
+```{r}
+posterior.estimates[["Consensus 1"]] <- apply(
+  consensus.out$theta.w.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+posterior.estimates[["Consensus 2"]] <- apply(
+  consensus.out$theta.w.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Density product estimators.
+
+```{r}
+posterior.estimates[["NDPE"]] <- apply(
+  ndpe.out$theta.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+posterior.estimates[["SDPE"]] <- apply(
+  sdpe.out$theta.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+
+
+## Example with $\lambda = 0.5$
+
+I contend that the fractionated prior used in the previous example gives rise 
+to acceptable results with the consensus algorithm only because it happens to 
+be similar to the posterior distribution (density concentrated near zero).
+
+What if we used the same prior distribution in a similar example but where the 
+true success rate is 0.5?
+
+```{r}
+n <- 1000
+n_success <- n / 2
+x <- c(rep(0, n - n_success), rep(1, n_success))
+```
+
+Partition the data into $M = 100$ shards.
+
+```{r}
+M <- 100
+x.list <- partition(x, M, random = TRUE, balanced = TRUE)
+```
+
+### Option: distribute data shards to Spark cluster
+
+```{r eval = FALSE}
+# NOT RUN
+x.cluster.parts <- list()
+for (p in 1:M) x.cluster.parts[[p]] <- sdf_copy_to(sc, as.data.frame(cbind(p, x.list[[p]])), repartition = 1, overwrite = TRUE)
+# This creates a Spark table with M "partitions" (i.e. distributed parts).
+x.cluster <- do.call(sdf_bind_rows, x.cluster.parts)
+```
+
+## Sample from the posterior distribution
+
+Here we sample from the full posterior distribution.
+
+```{r}
+H <- 10000
+# Beta prior parameters.
+a <- 1
+b <- 1
+
+a.post <- a + sum(x)
+b.post <- b + n - sum(x)
+samples.full <- rbeta(H, a.post, b.post)
+```
+
+Here we sample from the partial posterior defined with the unmodified beta 
+prior.
+
+```{r}
+samples.part <- lapply(x.list, FUN = function(xi) {
+    a.post = a + sum(xi)
+    b.post = b + n - sum(xi)
+    matrix(rbeta(ceiling(H / M), a.post, b.post), ceiling(H / M), 1)
+})
+```
+
+And here we sample from the partial posterior defined with the fractionated 
+prior.
+
+```{r}
+samples.part.frac <- lapply(x.list, FUN = function(xi) {
+    a.post = a / M + sum(xi)
+    b.post = b / M + n - sum(xi)
+    matrix(rbeta(ceiling(H / M), a.post, b.post), ceiling(H / M), 1)
+})
+```
+
+This is what the true posterior looks like.
+
+```{r}
+x.grid <- qbeta(seq(1e-6, 1 - 1e-6, by = 1e-6), a.post, b.post, log.p = TRUE)
+posterior_plot_data <- data.frame(
+  Lambda = c(x.grid),
+  Density = dbeta(x.grid, a.post, b.post),
+  Series = rep("Posterior", length(x.grid))
+)
+ggplot2::ggplot(posterior_plot_data, ggplot2::aes(x = Lambda, y = Density)) +
+ggplot2::geom_line() +
+ggplot2::scale_x_continuous(name = expression(lambda)) +
+ggplot2::theme_bw(base_size = 8) +
+ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
+```
+
+The posterior mean is
+
+```{r}
+a.post / (a.post + b.post)
+```
+
+And the posterior variance is
+
+```{r}
+a.post * b.post / (a.post + b.post) ^ 2 / (a.post + b.post + 1)
+```
+
+Plotting the samples.
+
+```{r}
+dens <- density(samples.full)
+plot_data <- rbind(posterior_plot_data, data.frame(
+  Lambda = dens$x[dens$x >= 0 & dens$x <= 1],
+  Density = dens$y[dens$x >= 0 & dens$x <= 1],
+  Series = rep("Posterior samples", sum(dens$x >= 0 & dens$x <= 1))
+))
+ggplot2::ggplot(plot_data, ggplot2::aes(x = Lambda, y = Density, linetype = Series)) +
+ggplot2::geom_line() +
+ggplot2::scale_x_continuous(name = expression(lambda)) +
+ggplot2::scale_linetype_manual(values = c("Posterior" = "solid", "Posterior samples" = "dotted")) +
+ggplot2::theme_bw(base_size = 8) +
+ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
+```
+
+
+## Pooling algorithms
+
+Here we define the log likelihood function, to be used by remix.
+
+```{r}
+loglik.fun <- function(theta, x, mem.limit = 1024^3) {
+  H <- nrow(theta)
+  n <- length(x)
+  ll <- matrix(0, H, 1)
+  mem.req <- 2 * n * H * 8
+  n_chunks <- ceiling(mem.req / mem.limit)
+  Hk <- ceiling(H / n_chunks)
+  for (k in 1:n_chunks) {
+    chunk.inds <- ((k - 1) * Hk + 1):min(k * Hk, H)
+    ll[,1] <- ll[,1] + .rowSums(
+      outer(log(theta[chunk.inds,]), x),
+      length(chunk.inds),
+      n
+    )
+  }
+  ll
+}
+```
+
+Remix.
+
+```{r}
+timer <- proc.time()
+remix.out <- remix.weights(
+  x.list,
+  samples.part,
+  loglik.fun = loglik.fun,
+  type = 2,
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+```
+
+Consensus Monte Carlo algorithm.
+
+```{r}
+timer <- proc.time()
+consensus1.out <- consensus.weights(
+  samples.part.frac,
+  type = 1,
+  return.pooled = TRUE
+)
+print(proc.time() - timer)
+
+timer <- proc.time()
+consensus2.out <- consensus.weights(
+  samples.part.frac,
+  type = 2,
+  return.pooled = TRUE
+)
+print(proc.time() - timer)
+```
+
+Density product estimators.
+
+```{r}
+timer <- proc.time()
+ndpe.out <- dpe.master(
+  samples.part.frac,
+  type = "ndpe",
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+
+timer <- proc.time()
+sdpe.out <- dpe.master(
+  samples.part.frac,
+  type = "sdpe",
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+```
+
+Plot the remix and consensus algorithm approximations of the posterior density.
+
+```{r}
+dens <- density(consensus2.out$theta.w.pooled)
+plot_data <- rbind(posterior_plot_data, data.frame(
+  Lambda = dens$x[dens$x >= 0 & dens$x <= 1],
+  Density = dens$y[dens$x >= 0 & dens$x <= 1],
+  Series = rep("Consensus (weighted)", sum(dens$x >= 0 & dens$x <= 1))
+))
+
+x.grid <- seq(quantile(samples.full, prob = 1e-4), quantile(samples.full, prob = 1 - 1e-4), by = dens$bw)
+dens.remix <- remix.kde(
+  x.grid,
+  samples.part,
+  remix.out$wn.type_2,
+  bw = dens$bw
+)
+plot_data <- rbind(plot_data, data.frame(
+  Lambda = x.grid,
+  Density = dens.remix,
+  Series = rep("Remix (type 2)", length(x.grid))
+))
+
+ggplot2::ggplot(plot_data, ggplot2::aes(x = Lambda, y = Density, linetype = Series)) +
+ggplot2::geom_line() +
+ggplot2::scale_x_continuous(name = expression(lambda)) +
+ggplot2::scale_linetype_manual(values = c("Posterior" = "solid", "Consensus (weighted)" = "dotted", "Remix (type 2)" = "dashed")) +
+ggplot2::theme_bw(base_size = 8) +
+ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
+```
+
+Here is a quantile-quantile plot for the consensus and remix algorithms.
+
+```{r}
+# True posterior quantiles.
+p.grid <- c(
+  exp(seq(log(1e-6), log(0.5), by = 1e-4)),
+  1 - exp(seq(log(1e-6), log(0.5), by = 1e-4))
+)
+q.post <- qbeta(p.grid, a.post, b.post)
+
+# Consensus estimates.
+qq_data <- data.frame(
+  Posterior_Quantile = q.post,
+  Estimated_Quantile = quantile(consensus2.out$theta.w.pooled, probs = p.grid),
+  Series = rep("Consensus (weighted)", length(p.grid))
+)
+
+# Remix estimates.
+p.remix <- cumsum(exp(unlist(remix.out$wn.type_2)[order(unlist(samples.part))]))
+q.remix <- sort(unlist(samples.part))[findInterval(p.grid, p,remix, all.inside = TRUE)]
+qq_data <- rbind(qq_data, data.frame(
+  Posterior_Quantile = q.post,
+  Estimated_Quantile = q.remix,
+  Series = rep("Remix (type 2)", length(p.grid))
+))
+
+# Add diagonal?
+# qq_data <- rbind(qq_data, data.frame(
+#  Posterior_Quantile = q.post,
+#  Estimated_Quantile = q.post,
+#  Series = rep("Identity", length(p.grid))
+#)
+
+ggplot2::ggplot(qq_data, ggplot2::aes(x = Posterior_Quantile, y = Estimated_Quantile, linetype = Series)) +
+ggplot2::geom_line() +
+ggplot2::scale_x_continuous(name = "Posterior quantile") +
+ggplot2::scale_y_continuous(name = "Estimated quantile") +
+ggplot2::scale_linetype_manual(values = c("Consensus (weighted)" = "dotted", "Remix (type 2)" = "dashed")) +
+ggplot2::theme_bw(base_size = 8) +
+ggplot2::theme(
+  panel.grid.minor = ggplot2::element_blank(),
+  panel.grid.major = ggplot2::element_blank()
+  legend.position= c(1 - 0.8, 0.75),
+  legend.title = ggplot2::element_blank()
+)
+```
+
+
+### Posterior parameter estimates
+
+Here we compute the pooling algorithm estimates of the posterior mean, median, 
+2.5% quantile, 97.5% quantile and standard deviation of each model parameter 
+dimension.
+
+```{r}
+posterior.estimates <- list()
+```
+
+Full posterior sampling.
+
+```{r}
+posterior.estimates[["Vanilla"]] <- apply(
+  samples.full,
+  2,
+  FUN = function(theta) {
+    c(
+      "Mean" = mean(theta),
+      "Median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "Std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Naive pooling of partial posterior samples.
+
+```{r}
+posterior.estimates[["Naive"]] <- apply(
+  abind::abind(samples.part, along = 1),
+  2,
+  FUN = function(theta) {
+    c(
+      "Mean" = mean(theta),
+      "Median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "Std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Remix algorithm 1.
+
+```{r}
+posterior.estimates[["Remix 1"]] <- rbind(
+  "Mean" = remix.mean(samples.part, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec),
+  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
+  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
+  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",]
+)
+posterior.estimates[["Remix 1"]] <- rbind(
+  posterior.estimates[["Remix 1"]],
+  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]] ^ 2)
+)
+```
+
+Remix algorithm 2.
+
+```{r}
+posterior.estimates[["Remix 2"]] <- rbind(
+  "Mean" = remix.mean(samples.part, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec),
+  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
+  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
+  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",]
+)
+posterior.estimates[["Remix 2"]] <- rbind(
+  posterior.estimates[["Remix 2"]],
+  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]] ^ 2)
+)
+```
+
+Consensus Monte Carlo.
+
+```{r}
+posterior.estimates[["Consensus 1"]] <- apply(
+  consensus.out$theta.w.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+posterior.estimates[["Consensus 2"]] <- apply(
+  consensus.out$theta.w.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Density product estimators.
+
+```{r}
+posterior.estimates[["NDPE"]] <- apply(
+  ndpe.out$theta.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+posterior.estimates[["SDPE"]] <- apply(
+  sdpe.out$theta.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+
+
+
+
+Close cluster, if used.
+
+```{r eval = FALSE}
+# NOT RUN
 spark_disconnect(sc)
 ```
 

@@ -69,15 +69,17 @@
 #' @param ... additional parameters to be supplied to the log likelihood 
 #' function. See details on \code{loglik.fun}.
 #'
-#' @return A list containing fields: \code{Hvec}, a vector of the number of 
-#' samples from each partial posterior; \code{wn.type_1} or \code{wn.type_2}, 
-#' the normalised weighted of type 1 or type 2, depending on the value of 
-#' \code{type}; \code{wn.type_1} additionally returned in \code{keep.type1} is 
-#' \code{TRUE}; and \code{w.type_1} and/or \code{w.type_2}, the corresponding 
-#' unnormalised weights, if \code{keep.unnormalised} is \code{TRUE}. Weights 
-#' are returned as lists of matrices with 1 column and rows corresponding to 
-#' sample. The list elements correspond to partial posterior (same as argument 
-#' \code{theta}).
+#' @return A list containing fields:
+#' \item{Hvec}{a vector of the number of samples from each partial 
+#' posterior.}
+#' \item{wn.type_1 or wn.type_2}{the normalised weighted of type 1 or type 2, 
+#' depending on the value of \code{type}.}
+#' \item{wn.type_1}{additionally returned if \code{keep.type1} is \code{TRUE}.}
+#' \item{w.type_1 and/or w.type_2}{the corresponding unnormalised weights, if 
+#' \code{keep.unnormalised} is \code{TRUE}
+#' Weights are returned as lists of matrices with 1 column and rows 
+#' corresponding to sample. The list elements correspond to partial posterior 
+#' (same as argument \code{theta}).
 #'
 #' @export
 remix.weights <- function(
@@ -382,12 +384,12 @@ remix.mean <- function(
   d <- ncol(negatives)
   mu.hat <- rep(NA, d)
   for (j in 1:d) {
-    if (any(negatives)) {
+    if (any(negatives[,j])) {
       mu.hat[j] <- -exp(lrowsums(
           log(FUN(-samples[negatives[,j],,drop = FALSE])) + wn[negatives[,j]]
       ))
     } else {mu.hat[j] <- 0}
-    if (any(!negatives)) {
+    if (any(!negatives[,j])) {
       mu.hat[j] <- mu.hat[j] + exp(lrowsums(
           log(FUN(samples[!negatives[,j],,drop = FALSE])) + wn[!negatives[,j]]
       ))
@@ -396,6 +398,96 @@ remix.mean <- function(
   
   return(mu.hat)
 }
+
+#' Monte Carlo estimate of posterior density
+#'
+#' Compute a KDE estimate of the posterior density evaluated at a number of 
+#' values of a univariate random variable. The posterior is estimated with a 
+#' Monte Carlo sample weighted by the remix type 1 or type 2 importance 
+#' weights.
+#'
+#' The output of this function is the same as \code{remix.mean} with a 
+#' \code{FUN} argument being a Gaussian kernel function, evaluated over a range 
+#' of values. This function is optimised to perform this without looping over 
+#' target values.
+#'
+#' @seealso \code{remix.mean}, \code{remix.weights}
+#'
+#' @param x a vector of values for which the density estimate is to be computed.
+#' @param theta a list of matrices, each containing samples of model parameters 
+#' from partial posterior distributions. Each matrix should have the same 
+#' number of columns, which correspond to model parameters (including 
+#' components of parameter vectors). Each list element corresponds to a single 
+#' partial posterior.
+#' @param wn a list of matrices, each containing normalised weights, one for 
+#' each sample in \code{theta} and obtained using the 
+#' \code{\link{remix.weights}} function.
+#' @param bw the smoothing bandwidth to be used. The kernels are scaled such 
+#' that this is the standard deviation of the (Gaussian) smoothing kernel.
+#' @param type an integer, either 1 or 2, specifying the weighting type used.
+#' @param Hvec an optional vector specifying the number of samples taken from 
+#' each partial posterior.
+#' @param log. logical. If \code{TRUE}, density estimates are returned on the 
+#' (natural) log scale.
+#' @param mem.limit a positive value specifying the memory permitted for large 
+#' arrays, in bytes. The function features a computational step that can 
+#' consume a lot of memory. Increase this for a speed up or decrease it if 
+#' memory is constrained.
+#'
+#' @return A vector the same length as \code{x} of density estimates.
+#' @export
+remix.kde <- function(
+  x,
+  theta,
+  wn,
+  bw,
+  type = 2,
+  Hvec = NULL,
+  log. = FALSE,
+  mem.limit = 1024^3
+) {
+  if (class(theta) != "list") stop("theta must be a list!")
+  if (class(wn) != "list") stop("wn must be a list!")
+  if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
+  if (any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
+  if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
+  if (bw <= 0) stop("bw must be positive!")
+
+  if (is.null(Hvec)) {
+    Hvec <- sapply(theta, nrow)
+  } else if (length(Hvec) != length(theta)) {
+    stop("There should be one element of Hvec for each element of theta!")
+  }
+  
+  # In type 1 we need to add the mixture distribution weights (these are already 
+  # implicit in the type 2 weight definition).
+  if (type == 1) {
+    l_mixture_weight <- log(Hvec) - log(sum(Hvec))
+    wn <- mapply(FUN = function(wi, m) {wi + m}, wn, l_mixture_weight, SIMPLIFY = FALSE)
+  }
+  
+  # Collect samples and weights.
+  theta <- abind::abind(theta, along = 1)
+  wn <- abind::abind(wn, along = 1)
+  
+  n <- length(x)
+  y <- rep(-Inf, n)
+  mem.req <- sum(Hvec) * n * 8
+  n_chunks <- min(ceiling(mem.req / mem.limit), n)
+  nk <- ceiling(n / n_chunks)
+  for (k in 1:n_chunks) {
+    chunk.inds <- ((k - 1) * nk + 1):min(k * nk, n)
+    f <- outer(theta, x[chunk.inds], FUN = "-") / bw
+    y[chunk.inds] <- lrowsums(-(1 / 2) * log(2 * pi) - 1 / 2 * f ^ 2 + wn)
+  }
+  y <- y - log(bw)
+
+  if (!log.) y <- exp(y)
+  
+  return(mu.hat)
+}
+
 
 #' Monte Carlo estimate of a quantile of a univariate function
 #'

@@ -10,6 +10,13 @@ in the computation of the type 2 weights and we often want both for comparison.
 all weights: type 1, type 2, type 1 with PSIS and type 2 with PSIS, and there 
 is lots of shared computation in these. So now the PSIS transformation of the 
 weights is applied using function `pareto_smooth`, called AFTER `calc_weights`.
+* The fractionated prior concept: this originates in the published literature 
+for the consensus and DPE algorithms. It is a theoretical requirement but 
+perhaps not a practical one. If you don't use the fractionated prior, your 
+samples will not be from the posterior distribution implied by your original 
+choice of prior distribution. However, it is not always possible to perform the 
+fractionation of the prior distribution, and if the prior is not very 
+informative it possibly does not matter very much.
 
 ## Spark notes
 

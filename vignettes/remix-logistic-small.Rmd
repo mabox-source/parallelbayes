@@ -25,3 +25,19 @@ In this vignette we reproduce the logistic regression example from Scott et al
 ```{r}
 data(scott_logistic)
 ```
+
+The data now loaded are in the binary outcome format, i.e. each observation 
+(row) contains an outcome $y$ that can be 1 or 0, and discrete predictors $x_1$ 
+to $x_5$. We can compress these data without losing any information by grouping 
+the predictor variables and counting the number of positive outcomes in each 
+group. The number of binary observations in each group is used to weight each 
+count observation in a logistic regression. This is the format used in Scott et 
+al 2016, and makes logistic regression far more computationally efficient.
+
+```{r}
+scott_logistic.grouped <- aggregate(y ~ x1 + x2 + x3 + x4 + x5, data = scott_logistic, FUN = sum)
+# Add weights.
+scott_logistic.grouped$w <- aggregate(rep(1, nrow(scott_logistic)), by = scott_logistic[,2:ncol(scott_logistic)], FUN = sum)$x
+```
+
+

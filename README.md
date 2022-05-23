@@ -17,6 +17,8 @@ samples will not be from the posterior distribution implied by your original
 choice of prior distribution. However, it is not always possible to perform the 
 fractionation of the prior distribution, and if the prior is not very 
 informative it possibly does not matter very much.
+* `R` package `BayesLogit` has been reduced to containing only the `rpg` 
+function. I will need to add my own Gibbs sampler.
 
 ## Spark notes
 

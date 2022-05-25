@@ -144,3 +144,98 @@ partition <- function(x,
 
     return(p)
 }
+
+#' Gibbs Sampling in a Logistic Regression Model
+#'
+#' Samples from the posterior distribution of model parameters (coefficients) 
+#' in a logistic regression model with the logit link and using supplied data. 
+#' This Gibbs sampling algorithm is due to Polson et al 2013.
+#'
+#' The model is specified via argument \code{params} (also returned as a field 
+#' of the output list). \code{params} is a list with the following fields:
+#'
+#' \describe{
+#' \item{\code{mu}}{Location parameter vector in multivariate normal prior for 
+#' coefficients.}
+#' \item{\code{Sigma}}{Covariance matrix in multivariate normal prior for 
+#' coefficients.}
+#' }
+#'
+#' @section References
+#' \itemize{
+#' \item{Polson, N.G., Scott, J.G. and Windle, J., 2013. Bayesian inference for logistic model using P\out{&oacture;}lya-Gamma latent variables. \emph{Journal of the American statistical Association, 108} \bold{(504)}, pp.1339-1349.}
+#' }
+#'
+#' @param x matrix of independent variables. Each column is interpreted as a 
+#' predictor variable.
+#' @param y integer or logical vector, the dependent variable.
+#' @param weights an optional vector of sample weights to use in a binomial 
+#' logistic regression where the dependent variable \code{y} is an integer 
+#' vector. In this case \code{weights} are the corresponding case weights.
+#' @param offset optional vector of offsets.
+#' @param H an integer specifying the number of MCMC iterations and therefore 
+#' of samples to draw.
+#' @param params list of model parameters. See details.
+#' @return A list containing matrix of samples, \code{samples}, and list 
+#' \code{params}. 
+#' @export
+logistic.sampler <- function(
+  y,
+  x,
+  weights = rep(1, nrow(x)),
+  offset = NULL,
+  H = 1000,
+  params = list()
+) {
+
+  n <- nrow(x)
+  m <- ncol(x)
+
+  ##############################################################################
+  # Setup model.
+  if (is.null(params$mu)) params$mu <- rep(0, m)
+  if (is.null(params$Sigma)) params$Sigma <- diag(m) * 2.5 ^ 2
+  full_cond.mean_part <- crossprod(x, y - weights / 2)
+  prior_prec <- solve(params$Sigma)
+  samples <- list(
+    theta = matrix(NA, H, m)
+  )
+  # Sample first value from prior distribution.
+  samples$theta[1,] <- MASS::mvrnorm(1, params$mu, params$Sigma)
+
+  ##############################################################################
+  # Gibbs sampling.
+
+  pb <- txtProgressBar(style = 3)
+  for (h in 2:H) {
+
+    ############################################################################
+    # Sample Polya-gamma augmentation variables. See Polson et al 2013.
+    if (is.null(offset)) {
+      eta <- x %*% samples$theta[h - 1,]
+    } else {
+      eta <- x %*% samples$theta[h - 1,] + offset
+    }
+    aug <- BayesLogit::rpg(num = n, z = abs(eta), h = as.numeric(weights))
+
+    ############################################################################
+    # Sample coefficients from full conditional distribution.
+    # Need covariance and mean.
+    full_cond.cov <- crossprod(x, aug * x)
+    full_cond.cov <- solve(full_cond.cov + prior_prec)
+    if (is.null(offset)) {
+      full_cond.mean <- full_cond.cov %*% (full_cond.mean_part + prior_prec %*% params$mu)
+    } else {
+      full_cond.mean <- full_cond.cov %*% (full_cond.mean_part - crossprod(x, aug * offset) + prior_prec %*% params$mu)
+    }
+    samples$coefs[h,] <- MASS::mvrnorm(1, full_cond.mean, full_cond.cov)
+
+    setTxtProgressBar(pb, (h - 1) / (H - 1))
+  }
+  close(pb)
+
+  return(list(
+    samples = samples,
+    params = params
+  ))
+}

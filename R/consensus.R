@@ -195,12 +195,12 @@ consensus.weights <- function(
 #' Spark table.
 #'
 #' \code{context} should be a list with the following fields:
-#' \itemize{
-#' \item{\code{type}: integer, either 1 or 2, specifying the weighting type to 
+#' \describe{
+#' \item{\code{type}}{Integer, either 1 or 2, specifying the weighting type to 
 #' use. 1: use constant weighting. 2: weight samples using the sample covariance 
 #' matrices of the partial posteriors.}
-#' \item{\code{use_spark}: logical. \code{TRUE} if a Spark cluster is available.}
-#' \item{\code{tol}: the tolerance level for the reciprocal condition number of 
+#' \item{\code{use_spark}}{Logical. \code{TRUE} if a Spark cluster is available.}
+#' \item{\code{tol}}{The tolerance level for the reciprocal condition number of 
 #' the covariance matrix. If less than this, the covariances are ignored.}
 #' }
 #'

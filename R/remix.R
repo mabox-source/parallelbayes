@@ -281,12 +281,12 @@ remix.weights <- function(
 #' computation.
 #'
 #' \code{context} should be a list with the following fields:
-#' \itemize{
-#' \item{\code{theta}: a matrix of all samples from the partial posteriors, 
+#' \describe{
+#' \item{\code{theta}}{A matrix of all samples from the partial posteriors, 
 #' pooled.}
-#' \item{\code{use_spark}: logical. \code{TRUE} if a Spark cluster is available.}
-#' \item{\code{loglik.fun}: the log likelihood function.}
-#' \item{\code{args}: a list of additional arguments to the log likelihood 
+#' \item{\code{use_spark}}{Logical. \code{TRUE} if a Spark cluster is available.}
+#' \item{\code{loglik.fun}}{The log likelihood function.}
+#' \item{\code{args}}{A list of additional arguments to the log likelihood 
 #' function. This list can be empty.}
 #' }
 #'

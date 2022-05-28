@@ -38,6 +38,34 @@ al 2016, and makes logistic regression far more computationally efficient.
 scott_logistic.grouped <- aggregate(y ~ x1 + x2 + x3 + x4 + x5, data = scott_logistic, FUN = sum)
 # Add weights.
 scott_logistic.grouped$w <- aggregate(rep(1, nrow(scott_logistic)), by = scott_logistic[,2:ncol(scott_logistic)], FUN = sum)$x
+# Add outcome (proportion).
+scott_logistic.grouped$p <- scott_logistic.grouped$y / scott_logistic.grouped$w
+```
+
+In the normal data experiments we were able to measure accuracy from the true 
+posterior statistics (mean and covariance). In logistic regression the true 
+posterior is unknown and can only be approximated (here using MCMC).
+
+We will therefore measure accuracy from the "vanilla" ($M = 1$) MCMC estimates.
+
+### Sample from full posterior
+
+```{r}
+H <- 250000
+
+params <- list()
+params$mu <- rep(0, 5)
+params$Sigma <- 2.5 ^ 2 * diag(5)
+
+out <- logistic.sampler(
+  y = scott_logistic.grouped$p,
+  x = scott_logistic.grouped[,c("x1", "x2", "x3", "x4", "x5")],
+  weights = scott_logistic.grouped$w,
+  H = H,
+  params = params
+)
+
+samples.full <- out$samples
 ```
 
 

@@ -136,7 +136,7 @@ f <- function(df, context) {
   x.bar <- colMeans(df[,-1])
 
   for (h in 1:context$H) {
-    samples.part[h,1 + 1:contextd] <- MASS::mvrnorm(1, x.bar, 1 / n * context$Sigma)
+    samples.part[h,1 + 1:context$d] <- MASS::mvrnorm(1, x.bar, 1 / n * context$Sigma)
   }
 
   samples.part

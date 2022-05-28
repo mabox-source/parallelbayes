@@ -134,12 +134,13 @@ remix.weights <- function(
   # Dimension of the model.
   d <- ncol(theta[[1]])
   # Record which partial posterior each sample came from.
-  pp_inds <- rep(1:n_shards, Hvec)
+  pp.inds <- rep(1:n_shards, Hvec)
   
   
   # Parameter list for workers.
-  context <- list(
+  ctx <- list(
     theta = do.call(rbind, theta),
+    H = H,
     use_spark = use_spark,
     loglik.fun = loglik.fun,
     args = list(...)
@@ -150,9 +151,8 @@ remix.weights <- function(
     use_parallel = use_parallel,
     # Pool samples into one matrix.
     theta = do.call(rbind, theta),
-    H = H,
     Hvec = Hvec,
-    pp_inds = pp_inds,
+    pp.inds = pp.inds,
     loglik.fun = loglik.fun,
     d = d
   )
@@ -194,14 +194,14 @@ remix.weights <- function(
   # Type 1 weights: divide out likelihood from partial posterior of origin; call 
   # it w.denominator.
   if (verbose) message("Computing type 1 weights...")
-  w.denominator <- matrix(ll.array[c(outer(1:H, (0:(dim(ll.array)[2] - 1)) * params$H, FUN = "+")) + (pp_inds - 1) * params$H * dim(ll.array)[2]], H, dim(ll.array)[2])
+  w.denominator <- matrix(ll.array[c(outer(1:H, (0:(dim(ll.array)[2] - 1)) * H, FUN = "+")) + (pp.inds - 1) * H * dim(ll.array)[2]], H, dim(ll.array)[2])
   
   w.type_1 <- matrix(w.numerator - w.denominator, dim(w.numerator)[1], dim(w.numerator)[2])
   # Need the shard specific sums of type 1 weights for normalisation of 
   # type 1 and for the mixture estimator in type 2. Split into list first to 
   # facilitate this.
   # Split only preserves dimensions on data.frames, so convert to df first.
-  w.type_1 <- split(as.data.frame(w.type_1), params$pp_inds)
+  w.type_1 <- split(as.data.frame(w.type_1), params$pp.inds)
   w.type_1 <- lapply(w.type_1, as.matrix)
   w.type_1 <- lapply(w.type_1, FUN = function(ww){dimnames(ww) <- NULL; ww})
   names(w.type_1) <- NULL
@@ -229,8 +229,9 @@ remix.weights <- function(
     # the type 1 weights.
     # Note: division of w.sum_type_1 by n samples, to get the mean, cancels 
     # with multiplication by n samples in the mixture weights.
-    type_2.mix <- sweep(ll.array, MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE) - log(params$H)
-    type_2.mix <- lrowsums(type_2.mix, 3)
+    type_2.mix <- sweep(ll.array, MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE) - log(H)
+# CHECK THIS LINE
+    type_2.mix <- lrowsums(type_2.mix, 3, drop. = TRUE)
     w.type_2 <- matrix(w.numerator - type_2.mix, dim(w.numerator)[1], dim(w.numerator)[2])
     if (verbose) message("Done.")
   
@@ -284,6 +285,7 @@ remix.weights <- function(
 #' \describe{
 #' \item{\code{theta}}{A matrix of all samples from the partial posteriors, 
 #' pooled.}
+#' \item{H}{Total number of samples (rows of \code{theta}).}
 #' \item{\code{use_spark}}{Logical. \code{TRUE} if a Spark cluster is available.}
 #' \item{\code{loglik.fun}}{The log likelihood function.}
 #' \item{\code{args}}{A list of additional arguments to the log likelihood 

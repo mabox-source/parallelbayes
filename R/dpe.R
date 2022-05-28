@@ -203,7 +203,8 @@ calc_mean <- function(theta, D, K, S, bw, consensus.prec, consensus.mean, use_sd
   # S: the component covariance found using calc_covariance().
   theta.mean <- .rowMeans(theta, D, K)
   if (use_sdpe) {
-    S %*% (K / bandwidth ^ 2 & theta.mean + consensus.prec %*% consensus.mean, use_sdpe)
+# CHECK THIS LINE
+    S %*% (K / bandwidth ^ 2 & theta.mean + consensus.prec %*% consensus.mean)
   } else {
     theta.mean
   }

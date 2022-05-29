@@ -388,12 +388,12 @@ remix.mean <- function(
   for (j in 1:d) {
     if (any(negatives[,j])) {
       mu.hat[j] <- -exp(lrowsums(
-          log(FUN(-samples[negatives[,j],,drop = FALSE])) + wn[negatives[,j]]
+          log(FUN(-theta[negatives[,j],,drop = FALSE])[,j]) + wn[negatives[,j]]
       ))
     } else {mu.hat[j] <- 0}
     if (any(!negatives[,j])) {
       mu.hat[j] <- mu.hat[j] + exp(lrowsums(
-          log(FUN(samples[!negatives[,j],,drop = FALSE])) + wn[!negatives[,j]]
+          log(FUN(theta[!negatives[,j],,drop = FALSE])[,j]) + wn[!negatives[,j]]
       ))
     }
   }
@@ -570,7 +570,7 @@ remix.quantile <- function(
   
   mu.hat <- rep(NA, d)
   for (j in 1:d) {
-    fs <- FUN(samples)[,j]
+    fs <- FUN(theta)[,j]
     a <- min(fs)
     fa <- lrowsums(wn[fs <= a]) - log(prob)
     if (fa > 0) {

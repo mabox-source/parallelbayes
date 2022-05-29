@@ -99,7 +99,7 @@ consensus.weights <- function(
   ctx <- list(
     use_spark = use_spark,
     type = type,
-    tol = tol
+    tol = cov.tol
   )
   if (use_spark) {
     spark.res <- spark_apply(theta, consensus.worker, context = ctx)
@@ -160,8 +160,8 @@ consensus.weights <- function(
           w,
           SIMPLIFY = FALSE
         ),
-        long = 3
-      ), dims = 2)
+        along = 3
+      ), dims = 2) %*% w.pooled
     } else {
       theta.w.pooled <- rowSums(abind::abind(
         mapply(
@@ -170,8 +170,8 @@ consensus.weights <- function(
           w,
           SIMPLIFY = FALSE
         ),
-        long = 3
-      ), dims = 2)
+        along = 3
+      ), dims = 2) %*% w.pooled
     }
     dimnames(theta.w.pooled) <- NULL
   }
@@ -184,6 +184,8 @@ consensus.weights <- function(
   if (use_spark) out$theta.w.spark <- theta.w.spark
   if (return.pooled) out$theta.w.pooled <- theta.w.pooled
   if (use_parallel && new_cluster) stopCluster(par.clust)
+
+  out
 }
 
 #' Compute consensus algorithm weight matrices
@@ -222,7 +224,7 @@ consensus.weights <- function(
 #' @export
 consensus.worker <- function(df, context) {
   # On Spark the first column is the part label identifying the data shard.
-  w.part <- matrix(NA, ncol(df) - context$use_spark * 1, ncol(df) + 1)
+  w.part <- matrix(NA, ncol(df), ncol(df) + 1)
   # Insufficient useable samples. Return NA matrix to signal error.
   if (nrow(df) < 2) return(w.part)
   # The shard label.

@@ -206,7 +206,7 @@ Consensus Monte Carlo algorithm.
 ```{r}
 timer <- proc.time()
 consensus1.out <- consensus.weights(
-  samples.part.frac,
+  samples.part,
   type = 1,
   return.pooled = TRUE
 )
@@ -214,7 +214,7 @@ print(proc.time() - timer)
 
 timer <- proc.time()
 consensus2.out <- consensus.weights(
-  samples.part.frac,
+  samples.part,
   type = 2,
   return.pooled = TRUE
 )
@@ -226,7 +226,7 @@ Density product estimators.
 ```{r}
 timer <- proc.time()
 ndpe.out <- dpe.master(
-  samples.part.frac,
+  samples.part,
   type = "ndpe",
   keep.type1 = TRUE
 )
@@ -234,7 +234,7 @@ print(proc.time() - timer)
 
 timer <- proc.time()
 sdpe.out <- dpe.master(
-  samples.part.frac,
+  samples.part,
   type = "sdpe",
   keep.type1 = TRUE
 )
@@ -262,8 +262,8 @@ posterior.estimates[["Vanilla"]] <- apply(
     c(
       "Mean" = mean(theta),
       "Median" = median(theta),
-      "2.5%" = quantile(theta, 0.025),
-      "97.5%" = quantile(theta, 0.975),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
       "Std. dev." = sd(theta)
     )
   }
@@ -280,8 +280,8 @@ posterior.estimates[["Naive"]] <- apply(
     c(
       "Mean" = mean(theta),
       "Median" = median(theta),
-      "2.5%" = quantile(theta, 0.025),
-      "97.5%" = quantile(theta, 0.975),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
       "Std. dev." = sd(theta)
     )
   }
@@ -299,7 +299,7 @@ posterior.estimates[["Remix 1"]] <- rbind(
 )
 posterior.estimates[["Remix 1"]] <- rbind(
   posterior.estimates[["Remix 1"]],
-  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]] ^ 2)
+  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]]["Mean",] ^ 2)
 )
 ```
 
@@ -314,7 +314,7 @@ posterior.estimates[["Remix 2"]] <- rbind(
 )
 posterior.estimates[["Remix 2"]] <- rbind(
   posterior.estimates[["Remix 2"]],
-  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]] ^ 2)
+  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]]["Mean",] ^ 2)
 )
 ```
 
@@ -322,28 +322,28 @@ Consensus Monte Carlo.
 
 ```{r}
 posterior.estimates[["Consensus 1"]] <- apply(
-  consensus.out$theta.w.pooled,
+  consensus1.out$theta.w.pooled,
   2,
-  fun = function(theta) {
+  FUN = function(theta) {
     c(
       "mean" = mean(theta),
       "median" = median(theta),
-      "2.5%" = quantile(theta, 0.025),
-      "97.5%" = quantile(theta, 0.975),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
       "std. dev." = sd(theta)
     )
   }
 )
 
 posterior.estimates[["Consensus 2"]] <- apply(
-  consensus.out$theta.w.pooled,
+  consensus2.out$theta.w.pooled,
   2,
-  fun = function(theta) {
+  FUN = function(theta) {
     c(
       "mean" = mean(theta),
       "median" = median(theta),
-      "2.5%" = quantile(theta, 0.025),
-      "97.5%" = quantile(theta, 0.975),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
       "std. dev." = sd(theta)
     )
   }
@@ -356,12 +356,12 @@ Density product estimators.
 posterior.estimates[["NDPE"]] <- apply(
   ndpe.out$theta.pooled,
   2,
-  fun = function(theta) {
+  FUN = function(theta) {
     c(
       "mean" = mean(theta),
       "median" = median(theta),
-      "2.5%" = quantile(theta, 0.025),
-      "97.5%" = quantile(theta, 0.975),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
       "std. dev." = sd(theta)
     )
   }
@@ -370,12 +370,12 @@ posterior.estimates[["NDPE"]] <- apply(
 posterior.estimates[["SDPE"]] <- apply(
   sdpe.out$theta.pooled,
   2,
-  fun = function(theta) {
+  FUN = function(theta) {
     c(
       "mean" = mean(theta),
       "median" = median(theta),
-      "2.5%" = quantile(theta, 0.025),
-      "97.5%" = quantile(theta, 0.975),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
       "std. dev." = sd(theta)
     )
   }
@@ -611,8 +611,8 @@ posterior.estimates[["Vanilla"]] <- apply(
     c(
       "Mean" = mean(theta),
       "Median" = median(theta),
-      "2.5%" = quantile(theta, 0.025),
-      "97.5%" = quantile(theta, 0.975),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
       "Std. dev." = sd(theta)
     )
   }
@@ -629,8 +629,8 @@ posterior.estimates[["Naive"]] <- apply(
     c(
       "Mean" = mean(theta),
       "Median" = median(theta),
-      "2.5%" = quantile(theta, 0.025),
-      "97.5%" = quantile(theta, 0.975),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
       "Std. dev." = sd(theta)
     )
   }
@@ -648,7 +648,7 @@ posterior.estimates[["Remix 1"]] <- rbind(
 )
 posterior.estimates[["Remix 1"]] <- rbind(
   posterior.estimates[["Remix 1"]],
-  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]] ^ 2)
+  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]]["Mean",] ^ 2)
 )
 ```
 
@@ -663,7 +663,7 @@ posterior.estimates[["Remix 2"]] <- rbind(
 )
 posterior.estimates[["Remix 2"]] <- rbind(
   posterior.estimates[["Remix 2"]],
-  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]] ^ 2)
+  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]]["Mean",] ^ 2)
 )
 ```
 
@@ -671,28 +671,28 @@ Consensus Monte Carlo.
 
 ```{r}
 posterior.estimates[["Consensus 1"]] <- apply(
-  consensus.out$theta.w.pooled,
+  consensus1.out$theta.w.pooled,
   2,
-  fun = function(theta) {
+  FUN = function(theta) {
     c(
       "mean" = mean(theta),
       "median" = median(theta),
-      "2.5%" = quantile(theta, 0.025),
-      "97.5%" = quantile(theta, 0.975),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
       "std. dev." = sd(theta)
     )
   }
 )
 
 posterior.estimates[["Consensus 2"]] <- apply(
-  consensus.out$theta.w.pooled,
+  consensus2.out$theta.w.pooled,
   2,
-  fun = function(theta) {
+  FUN = function(theta) {
     c(
       "mean" = mean(theta),
       "median" = median(theta),
-      "2.5%" = quantile(theta, 0.025),
-      "97.5%" = quantile(theta, 0.975),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
       "std. dev." = sd(theta)
     )
   }
@@ -705,12 +705,12 @@ Density product estimators.
 posterior.estimates[["NDPE"]] <- apply(
   ndpe.out$theta.pooled,
   2,
-  fun = function(theta) {
+  FUN = function(theta) {
     c(
       "mean" = mean(theta),
       "median" = median(theta),
-      "2.5%" = quantile(theta, 0.025),
-      "97.5%" = quantile(theta, 0.975),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
       "std. dev." = sd(theta)
     )
   }
@@ -719,12 +719,12 @@ posterior.estimates[["NDPE"]] <- apply(
 posterior.estimates[["SDPE"]] <- apply(
   sdpe.out$theta.pooled,
   2,
-  fun = function(theta) {
+  FUN = function(theta) {
     c(
       "mean" = mean(theta),
       "median" = median(theta),
-      "2.5%" = quantile(theta, 0.025),
-      "97.5%" = quantile(theta, 0.975),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
       "std. dev." = sd(theta)
     )
   }

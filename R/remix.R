@@ -230,7 +230,6 @@ remix.weights <- function(
     # Note: division of w.sum_type_1 by n samples, to get the mean, cancels 
     # with multiplication by n samples in the mixture weights.
     type_2.mix <- sweep(ll.array, MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE) - log(H)
-# CHECK THIS LINE
     type_2.mix <- lrowsums(type_2.mix, 3, drop. = TRUE)
     w.type_2 <- matrix(w.numerator - type_2.mix, dim(w.numerator)[1], dim(w.numerator)[2])
     if (verbose) message("Done.")

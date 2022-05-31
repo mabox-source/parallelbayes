@@ -133,12 +133,8 @@ dpe.master <- function(
       # Sample new component vector.
       for (i in 1:subset.size) {
         proposal.inds <- component.inds
-# CHECK THIS LINE
         proposal.inds[i] <- ceiling(runif(1) * H)
         proposal <- abind::abind(mapply(function(th, ind) {th[ind,]}, theta[subsets[[k]]], proposal.inds, SIMPLIFY = FALSE), along = 2)
-# CHECK THESE LINES
-        #proposal.cov <- calc_covariance(d, bw.vec[h], subset.size, consensus.prec, use_sdpe)
-        #proposal.mean <- calc_mean(proposal, d, subset.size, proposal.cov, bw.vec[h], consensus.prec, consensus.mean, use_sdpe)
         proposal.mean <- calc_mean(proposal, d, subset.size, component.cov, bw.vec[h], consensus.prec, consensus.mean, use_sdpe)
         proposal.w <- calc_weight(proposal, proposal.mean, bw.vec[h], d, subset.size, worker.mean[subsets[[k]]], worker.cov[subsets[[k]]], consensus.prec, consensus.mean, use_sdpe)
 
@@ -146,8 +142,6 @@ dpe.master <- function(
         u <- log(runif(1))
         if (u < proposal.w - component.w) {
           component.inds <- proposal.inds
-# CHECK THIS LINE
-          #component.cov <- proposal.cov
           component.mean <- proposal.mean
           component.w <- proposal.w
           component.accepted[h,i,k] <- TRUE
@@ -209,8 +203,7 @@ calc_mean <- function(theta, D, K, S, bw, consensus.prec, consensus.mean, use_sd
   # S: the component covariance found using calc_covariance().
   theta.mean <- .rowMeans(theta, D, K)
   if (use_sdpe) {
-# CHECK THIS LINE
-    S %*% (K / bw ^ 2 & theta.mean + consensus.prec %*% consensus.mean)
+    S %*% (K / bw ^ 2 * theta.mean + consensus.prec %*% consensus.mean)
   } else {
     theta.mean
   }

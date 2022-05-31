@@ -48,10 +48,17 @@ posterior is unknown and can only be approximated (here using MCMC).
 
 We will therefore measure accuracy from the "vanilla" ($M = 1$) MCMC estimates.
 
-### Sample from full posterior
+## Sample from full posterior
+
+We place an uncorrelated multivariate normal prior on coefficients. The mean is 
+$0$ and the variances are $2.5^2$. In the fractionated prior, the variances 
+become $(2.5 M) ^2$.
+
+Use a large sample size `H` here: we want to get as good convergence with the 
+"vanilla" sample as possible, to use it as a benchmark.
 
 ```{r}
-H <- 250000
+H <- 1000000
 
 params <- list()
 params$mu <- rep(0, 5)
@@ -68,4 +75,349 @@ out <- logistic.sampler(
 samples.full <- out$samples
 ```
 
+## Distributed sampling from partial posteriors
+
+Randomly partition the data into $M = 4$ parts.
+
+```{r}
+M <- 4
+x.list <- partition(scott_logistic.grouped, M, random = TRUE, balanced = TRUE)
+print(sapply(x.list, nrow))
+```
+
+Connect to Spark cluster (localhost) and distribute the parts.
+
+```{r}
+library(sparklyr)
+
+config <- spark_config()
+config$spark.executor.memory <- "1125m"
+config$spark.executor.cores <- 1
+config$spark.executor.instances <- 2
+config$spark.dynamicAllocation.enabled <- FALSE
+
+config$`sparklyr.cores.local` <- 8
+config$`sparklyr.shell.driver-memory` <- "8G"
+config$spark.dynamicAllocation.enabled <- "false"
+config$spark.executor.instances <- M
+
+sc <- spark_connect(
+  master = "local",
+  config = config
+)
+
+invoke(spark_context(sc), "getExecutorMemoryStatus")
+
+x.cluster.parts <- list()
+for (p in 1:M) x.cluster.parts[[p]] <- sdf_copy_to(sc, as.data.frame(cbind(p, x.list[[p]])), repartition = 1, overwrite = TRUE)
+# This creates a Spark table with M "partitions" (i.e. distributed parts).
+x.cluster <- do.call(sdf_bind_rows, x.cluster.parts)
+
+# Check a few things.
+spark_apply(x.cluster, function(p) nrow(p), names = "n")
+spark_apply(x.cluster, function(p) tail(p, 2))
+
+# Check number of partitions.
+sdf_num_partitions(x.cluster)
+```
+
+Define the function to distribute. We will use `context` to supply the prior 
+parameters, as well as the sample size and the random seeds.
+
+```{r}
+f <- function(df, context) {
+  # The partition label.
+  part <- df[1,1]
+
+  set.seed(context$seeds[part])
+
+  out <- logistic.sampler(
+    y = df$p,
+    x = df[,c("x1", "x2", "x3", "x4", "x5")],
+    weights = df$w,
+    H = context$H,
+    params = context
+  )
+
+  cbind(part, out$samples)
+}
+```
+
+Now run.
+
+```{r}
+# Set master seed.
+set.seed(1910161352)
+H <- 100000
+# Seeds for each executor.
+# Default RNG algorithm (Mersenne-Twister) uses 32 bit integers.
+seeds <- sample.int(2^32 - 1, M) - 2^32 / 2
+
+# Context object sent to executors.
+ctx <- list(
+  H = H,
+  mu = params$mu,
+  Sigma = params$Sigma,
+  seeds = seeds
+)
+
+res.cluster <- spark_apply(x.cluster, f, context = ctx)
+
+# Import results to local memory and convert to a list.
+res <- as.data.frame(res.cluster)
+samples.part <- split(res[,-1], res[,1])
+samples.part <- lapply(samples.part, FUN = as.matrix)
+```
+
+This time using the fractionated prior:
+
+```{r}
+# Seeds for each executor.
+# Default RNG algorithm (Mersenne-Twister) uses 32 bit integers.
+seeds <- sample.int(2^32 - 1, M) - 2^32 / 2
+
+# Context object sent to executors.
+ctx <- list(
+  H = H,
+  mu = params$mu,
+  Sigma = params$Sigma * M ^ 2,
+  seeds = seeds
+)
+
+res.cluster <- spark_apply(x.cluster, f, context = ctx)
+
+# Import results to local memory and convert to a list.
+res <- as.data.frame(res.cluster)
+samples.part.frac <- split(res[,-1], res[,1])
+samples.part.frac <- lapply(samples.part.frac, FUN = as.matrix)
+```
+
+
+## Pooling algorithms
+
+Here we define the log likelihood function, to be used by remix. This is 
+specific to the model with a binomial outcome.
+
+```{r}
+loglik.fun <- function(theta, x, Sigma, d) {
+  n <- nrow(x)
+  H <- nrow(theta)
+  # Column 1 is assumed to be the outcome. Column ncol(x) is assumed to be the
+  # weight (observation count).
+  eta <- tcrossprod(x[,-c(1,ncol(x))], theta)
+  sum(
+    lchoose(x[,ncol(x)], x[,1]) +
+    .colSums(
+      x[,1] * eta - x[,ncol(x)] * lrowsums(abind::abind(eta, matrix(0, n, H), along = 3), 3),
+      n,
+      H
+    )
+  )
+}
+```
+
+Remix.
+
+```{r}
+timer <- proc.time()
+remix.out <- remix.weights(
+  x.cluster,
+  samples.part,
+  loglik.fun = loglik.fun,
+  type = 2,
+  keep.type1 = TRUE,
+  Sigma = Sigma,
+  d = d
+)
+print(proc.time() - timer)
+```
+
+Consensus Monte Carlo algorithm.
+
+```{r}
+timer <- proc.time()
+consensus1.out <- consensus.weights(
+  samples.part.frac,
+  type = 1,
+  return.pooled = TRUE
+)
+print(proc.time() - timer)
+
+timer <- proc.time()
+consensus2.out <- consensus.weights(
+  samples.part.frac,
+  type = 2,
+  return.pooled = TRUE
+)
+print(proc.time() - timer)
+```
+
+Density product estimators.
+
+```{r}
+timer <- proc.time()
+ndpe.out <- dpe.master(
+  samples.part.frac,
+  type = "ndpe",
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+
+timer <- proc.time()
+sdpe.out <- dpe.master(
+  samples.part.frac,
+  type = "sdpe",
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+```
+
+
+### Posterior parameter estimates
+
+Here we compute the pooling algorithm estimates of the posterior mean, median, 
+2.5% quantile, 97.5% quantile and standard deviation of each model parameter 
+dimension.
+
+```{r}
+posterior.estimates <- list()
+```
+
+Full posterior sampling.
+
+```{r}
+posterior.estimates[["Vanilla"]] <- apply(
+  samples.full,
+  2,
+  FUN = function(theta) {
+    c(
+      "Mean" = mean(theta),
+      "Median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "Std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Naive pooling of partial posterior samples.
+
+```{r}
+posterior.estimates[["Naive"]] <- apply(
+  abind::abind(samples.part, along = 1),
+  2,
+  FUN = function(theta) {
+    c(
+      "Mean" = mean(theta),
+      "Median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "Std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Remix algorithm 1.
+
+```{r}
+posterior.estimates[["Remix 1"]] <- rbind(
+  "Mean" = remix.mean(samples.part, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec),
+  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
+  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
+  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",]
+)
+posterior.estimates[["Remix 1"]] <- rbind(
+  posterior.estimates[["Remix 1"]],
+  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]] ^ 2)
+)
+```
+
+Remix algorithm 2.
+
+```{r}
+posterior.estimates[["Remix 2"]] <- rbind(
+  "Mean" = remix.mean(samples.part, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec),
+  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
+  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
+  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",]
+)
+posterior.estimates[["Remix 2"]] <- rbind(
+  posterior.estimates[["Remix 2"]],
+  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]] ^ 2)
+)
+```
+
+Consensus Monte Carlo.
+
+```{r}
+posterior.estimates[["Consensus 1"]] <- apply(
+  consensus.out$theta.w.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+posterior.estimates[["Consensus 2"]] <- apply(
+  consensus.out$theta.w.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+Density product estimators.
+
+```{r}
+posterior.estimates[["NDPE"]] <- apply(
+  ndpe.out$theta.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+posterior.estimates[["SDPE"]] <- apply(
+  sdpe.out$theta.pooled,
+  2,
+  fun = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      "2.5%" = quantile(theta, 0.025),
+      "97.5%" = quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+```
+
+
+
+Close cluster.
+
+```{r}
+spark_disconnect(sc)
+```
 

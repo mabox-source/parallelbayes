@@ -248,8 +248,14 @@ Here we compute the pooling algorithm estimates of the posterior mean, median,
 2.5% quantile, 97.5% quantile and standard deviation of each model parameter 
 dimension.
 
+We also estimate the effective sample size (ESS). "Roughly speaking, the ESS of 
+a quantity of interest captures how many independent draws contain the same 
+amount of information as the dependent sample obtained by the MCMC algorithm" 
+(Vehtari et al 2019).
+
 ```{r}
 posterior.estimates <- list()
+ess <- sapply(c("Vanilla", "Naive", "Remix 1", "Remix 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
 ```
 
 Full posterior sampling.
@@ -268,6 +274,8 @@ posterior.estimates[["Vanilla"]] <- apply(
     )
   }
 )
+
+ess["Vanilla"] <- mcmcse::multiESS(samples.full)
 ```
 
 Naive pooling of partial posterior samples.
@@ -286,6 +294,8 @@ posterior.estimates[["Naive"]] <- apply(
     )
   }
 )
+
+ess["Naive"] <- mean(sapply(samples.part, FUN = mcmcse::multiESS))
 ```
 
 Remix algorithm 1.
@@ -301,6 +311,18 @@ posterior.estimates[["Remix 1"]] <- rbind(
   posterior.estimates[["Remix 1"]],
   "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]]["Mean",] ^ 2)
 )
+
+ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec))) -
+  lrowsums(
+    unlist(
+      mapply(
+        FUN = function(w, h) {2 * w + 2 * log(h)},
+        remix.out$wn.type1,
+        remix.out$Hvec,
+        SIMPLIFY = FALSE
+      )
+    )
+  )
 ```
 
 Remix algorithm 2.
@@ -316,6 +338,8 @@ posterior.estimates[["Remix 2"]] <- rbind(
   posterior.estimates[["Remix 2"]],
   "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]]["Mean",] ^ 2)
 )
+
+ess["Remix 2"] <- exp(-lrowsums(2 * unlist(remix.out$Hvec)))
 ```
 
 Consensus Monte Carlo.
@@ -335,6 +359,8 @@ posterior.estimates[["Consensus 1"]] <- apply(
   }
 )
 
+ess["Consensus 1"] <- mcmcse::multiESS(consensus1.out$theta.w.pooled)
+
 posterior.estimates[["Consensus 2"]] <- apply(
   consensus2.out$theta.w.pooled,
   2,
@@ -348,6 +374,8 @@ posterior.estimates[["Consensus 2"]] <- apply(
     )
   }
 )
+
+ess["Consensus 2"] <- mcmcse::multiESS(consensus2.out$theta.w.pooled)
 ```
 
 Density product estimators.
@@ -367,6 +395,8 @@ posterior.estimates[["NDPE"]] <- apply(
   }
 )
 
+ess["NDPE"] <- mcmcse::multiESS(ndpe.out$theta.pooled)
+
 posterior.estimates[["SDPE"]] <- apply(
   sdpe.out$theta.pooled,
   2,
@@ -380,6 +410,8 @@ posterior.estimates[["SDPE"]] <- apply(
     )
   }
 )
+
+ess["SDPE"] <- mcmcse::multiESS(sdpe.out$theta.pooled)
 ```
 
 
@@ -599,6 +631,7 @@ dimension.
 
 ```{r}
 posterior.estimates <- list()
+ess <- sapply(c("Vanilla", "Naive", "Remix 1", "Remix 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
 ```
 
 Full posterior sampling.
@@ -617,6 +650,8 @@ posterior.estimates[["Vanilla"]] <- apply(
     )
   }
 )
+
+ess["Vanilla"] <- mcmcse::multiESS(samples.full)
 ```
 
 Naive pooling of partial posterior samples.
@@ -635,6 +670,8 @@ posterior.estimates[["Naive"]] <- apply(
     )
   }
 )
+
+ess["Naive"] <- mean(sapply(samples.part, FUN = mcmcse::multiESS))
 ```
 
 Remix algorithm 1.
@@ -650,6 +687,18 @@ posterior.estimates[["Remix 1"]] <- rbind(
   posterior.estimates[["Remix 1"]],
   "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]]["Mean",] ^ 2)
 )
+
+ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec))) -
+  lrowsums(
+    unlist(
+      mapply(
+        FUN = function(w, h) {2 * w + 2 * log(h)},
+        remix.out$wn.type1,
+        remix.out$Hvec,
+        SIMPLIFY = FALSE
+      )
+    )
+  )
 ```
 
 Remix algorithm 2.
@@ -665,6 +714,8 @@ posterior.estimates[["Remix 2"]] <- rbind(
   posterior.estimates[["Remix 2"]],
   "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]]["Mean",] ^ 2)
 )
+
+ess["Remix 2"] <- exp(-lrowsums(2 * unlist(remix.out$Hvec)))
 ```
 
 Consensus Monte Carlo.
@@ -684,6 +735,8 @@ posterior.estimates[["Consensus 1"]] <- apply(
   }
 )
 
+ess["Consensus 1"] <- mcmcse::multiESS(consensus1.out$theta.w.pooled)
+
 posterior.estimates[["Consensus 2"]] <- apply(
   consensus2.out$theta.w.pooled,
   2,
@@ -697,6 +750,8 @@ posterior.estimates[["Consensus 2"]] <- apply(
     )
   }
 )
+
+ess["Consensus 2"] <- mcmcse::multiESS(consensus2.out$theta.w.pooled)
 ```
 
 Density product estimators.
@@ -716,6 +771,8 @@ posterior.estimates[["NDPE"]] <- apply(
   }
 )
 
+ess["NDPE"] <- mcmcse::multiESS(ndpe.out$theta.pooled)
+
 posterior.estimates[["SDPE"]] <- apply(
   sdpe.out$theta.pooled,
   2,
@@ -729,6 +786,8 @@ posterior.estimates[["SDPE"]] <- apply(
     )
   }
 )
+
+ess["SDPE"] <- mcmcse::multiESS(sdpe.out$theta.pooled)
 ```
 
 Close cluster.

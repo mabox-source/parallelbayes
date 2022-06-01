@@ -1,11 +1,11 @@
 ---
-title: "Remix in a Small Logistic Regression Example"
+title: "Remix in Large Logistic Regression Examples"
 author: "Marc Box"
 date: "`r Sys.Date()`"
 output: rmarkdown::html_vignette
 bibliography: "references.bib"
 vignette: >
-  %\VignetteIndexEntry{Remix in a Small Logistic Regression Example}
+  %\VignetteIndexEntry{Remix in Large Logistic Regression Examples}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -17,29 +17,26 @@ knitr::opts_chunk$set(
 )
 ```
 
-# Remix in a Small Logistic Regression Example
+# Remix in Large Logistic Regression Examples
 
-In this vignette we reproduce the logistic regression example from Scott et al 
-2016 with a small, artificial data set. The data are stored as package data.
+In this vignette we simulate artificial data sets for logistic regression using 
+a similar approach to Neiswanger et al 2013. This is parameterised in the 
+following way:
 
-```{r}
-data(scott_logistic)
-```
-
-The data now loaded are in the binary outcome format, i.e. each observation 
-(row) contains an outcome $y$ that can be 1 or 0, and discrete predictors $x_1$ 
-to $x_5$. We can compress these data without losing any information by grouping 
-the predictor variables and counting the number of positive outcomes in each 
-group. The number of binary observations in each group is used to weight each 
-count observation in a logistic regression. This is the format used in Scott et 
-al 2016, and makes logistic regression far more computationally efficient.
+* $50,000$ observations
+* $50$ predictor variables
+* Predictor variables follow independent standard normal distributions
+* Regression coefficients follow independent standard normal distributions
+* No regression intercept.
 
 ```{r}
-scott_logistic.grouped <- aggregate(y ~ x1 + x2 + x3 + x4 + x5, data = scott_logistic, FUN = sum)
-# Add weights.
-scott_logistic.grouped$w <- aggregate(rep(1, nrow(scott_logistic)), by = scott_logistic[,2:ncol(scott_logistic)], FUN = sum)$x
-# Add outcome (proportion).
-scott_logistic.grouped$p <- scott_logistic.grouped$y / scott_logistic.grouped$w
+n <- 50000
+p <- 50
+
+coefs <- rnorm(p)
+x <- matrix(rnorm(n * p), n, p)
+eta <- x %*% coefs
+y <- apply(cbind(1, exp(eta)), MARGIN = 1, FUN = function(p) {sample(0:1, 1, prob = p)})
 ```
 
 In the normal data experiments we were able to measure accuracy from the true 
@@ -67,9 +64,8 @@ params$mu <- rep(0, 5)
 params$Sigma <- 2.5 ^ 2 * diag(5)
 
 out <- logistic.sampler(
-  y = scott_logistic.grouped$p,
-  x = scott_logistic.grouped[,c("x1", "x2", "x3", "x4", "x5")],
-  weights = scott_logistic.grouped$w,
+  y = y,
+  x = x,
   H = H,
   params = params
 )
@@ -83,7 +79,7 @@ Randomly partition the data into $M = 4$ parts.
 
 ```{r}
 M <- 4
-x.list <- partition(scott_logistic.grouped, M, random = TRUE, balanced = TRUE)
+x.list <- partition(cbind(y, x), M, random = TRUE, balanced = TRUE)
 print(sapply(x.list, nrow))
 ```
 
@@ -134,9 +130,8 @@ f <- function(df, context) {
   set.seed(context$seeds[part])
 
   out <- logistic.sampler(
-    y = df$p,
-    x = df[,c("x1", "x2", "x3", "x4", "x5")],
-    weights = df$w,
+    y = df[,1],
+    x = df[,-1],
     H = context$H,
     params = context
   )
@@ -201,23 +196,25 @@ samples.part.frac <- lapply(samples.part.frac, FUN = as.matrix)
 ## Pooling algorithms
 
 Here we define the log likelihood function, to be used by remix. This is 
-specific to the model with a binomial outcome.
+specific to the model with a binary outcome.
 
 ```{r}
-loglik.fun <- function(theta, x) {
+loglik.fun <- function(theta, x, mem.limit = 1024 ^ 3) {
   n <- nrow(x)
   H <- nrow(theta)
-  # Column 1 is assumed to be the outcome. Column ncol(x) is assumed to be the
-  # weight (observation count).
-  eta <- tcrossprod(x[,-c(1,ncol(x))], theta)
-  sum(
-    lchoose(x[,ncol(x)], x[,1]) +
-    .colSums(
-      x[,1] * eta - x[,ncol(x)] * lrowsums(abind::abind(eta, matrix(0, n, H), along = 3), 3),
+  ll <- matrix(NA, H, 1)
+  mem.req <- 2 * n * H * 8
+  n_chunks <- min(ceiling(mem.req / mem.limit), H)
+  Hk <- ceiling(H / n_chunks)
+  for (k in 1:n_chunks) {
+    inds <- ((k - 1) * Hk + 1):min(k * Hk, H)
+    eta <- tcrossprod(x[,-1], theta[inds,,drop = FALSE])
+    ll[inds,] <- .colSums(
+      x[,1] * eta - lrowsums(abind::abind(eta, matrix(0, n, length(inds)), along = 3), 3)
       n,
-      H
+      length(inds)
     )
-  )
+  }
 }
 ```
 
@@ -232,7 +229,8 @@ remix.out <- remix.weights(
   type = 2,
   keep.type1 = TRUE,
   Sigma = Sigma,
-  d = d
+  d = d,
+  mem.limit = 1024 ^ 3
 )
 print(proc.time() - timer)
 ```
@@ -470,4 +468,3 @@ Close cluster.
 ```{r}
 spark_disconnect(sc)
 ```
-

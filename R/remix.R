@@ -470,7 +470,7 @@ remix.kde <- function(
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  wn <- abind::abind(wn, along = 1)
+  wn <- unlist(wn)
   
   n <- length(x)
   y <- rep(-Inf, n)
@@ -486,7 +486,7 @@ remix.kde <- function(
 
   if (!log.) y <- exp(y)
   
-  return(mu.hat)
+  return(y)
 }
 
 

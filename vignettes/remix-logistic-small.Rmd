@@ -355,7 +355,7 @@ ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec)) -
     unlist(
       mapply(
         FUN = function(w, h) {2 * w + 2 * log(h)},
-        remix.out$wn.type1,
+        remix.out$wn.type_1,
         remix.out$Hvec,
         SIMPLIFY = FALSE
       )

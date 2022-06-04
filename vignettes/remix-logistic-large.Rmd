@@ -207,6 +207,7 @@ loglik.fun <- function(theta, x, mem.limit = 1024 ^ 3) {
   n_chunks <- min(ceiling(mem.req / mem.limit), H)
   Hk <- ceiling(H / n_chunks)
   for (k in 1:n_chunks) {
+    if ((k - 1) * Hk + 1 > H) break
     inds <- ((k - 1) * Hk + 1):min(k * Hk, H)
     eta <- tcrossprod(x[,-1], theta[inds,,drop = FALSE])
     ll[inds,] <- .colSums(
@@ -285,7 +286,9 @@ dimension.
 We also estimate the effective sample size (ESS). "Roughly speaking, the ESS of 
 a quantity of interest captures how many independent draws contain the same 
 amount of information as the dependent sample obtained by the MCMC algorithm" 
-(Vehtari et al 2019).
+(Vehtari et al 2019). The maximum possible for the consensus and DPE algorithms 
+is $\frac{H^{total}}{M}$; for the other methods, including remix, the maximum 
+possible is $H$.
 
 ```{r}
 posterior.estimates <- list()
@@ -329,7 +332,7 @@ posterior.estimates[["Naive"]] <- apply(
   }
 )
 
-ess["Naive"] <- mean(sapply(samples.part, FUN = mcmcse::multiESS))
+ess["Naive"] <- mcmcse::multiESS(abind::abind(samples.part, along = 1))
 ```
 
 Remix algorithm 1.
@@ -346,7 +349,7 @@ posterior.estimates[["Remix 1"]] <- rbind(
   "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]] ^ 2)
 )
 
-ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec))) -
+ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec)) -
   lrowsums(
     unlist(
       mapply(
@@ -357,6 +360,7 @@ ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec))) -
       )
     )
   )
+)
 ```
 
 Remix algorithm 2.
@@ -373,7 +377,7 @@ posterior.estimates[["Remix 2"]] <- rbind(
   "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]] ^ 2)
 )
 
-ess["Remix 2"] <- exp(-lrowsums(2 * unlist(remix.out$Hvec)))
+ess["Remix 2"] <- exp(-lrowsums(2 * unlist(remix.out$wn.type_2)))
 ```
 
 Consensus Monte Carlo.

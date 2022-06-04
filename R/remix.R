@@ -211,8 +211,8 @@ remix.weights <- function(
   w.sum_type_1 <- lapply(w.type_1, FUN = function(ww) {lrowsums(ww, 1)})
   if (verbose) message("Done.")
   # Normalise weights and convert to a list with the same structure as theta.
+  if (verbose) message("Normalising type 1 weights...")
   if (type == 1 || keep.type1) {
-    if (verbose) message("Normalising type 1 weights...")
     for (i in 1:n_shards) {
       if (any(!is.finite(w.sum_type_1[[i]]))) message(paste0("Sum of type 1 weights for shard ", i, " is zero. NaN returned for normalised weights."))
     }
@@ -478,11 +478,12 @@ remix.kde <- function(
   n_chunks <- min(ceiling(mem.req / mem.limit), n)
   nk <- ceiling(n / n_chunks)
   for (k in 1:n_chunks) {
+    if ((k - 1) * nk + 1 > n) break
     chunk.inds <- ((k - 1) * nk + 1):min(k * nk, n)
     f <- outer(theta, x[chunk.inds], FUN = "-") / bw
-    y[chunk.inds] <- lrowsums(-(1 / 2) * log(2 * pi) - 1 / 2 * f ^ 2 + wn)
+    y[chunk.inds] <- lrowsums(-f ^ 2 / 2 + wn)
   }
-  y <- y - log(bw)
+  y <- y - (1 / 2) * log(2 * pi) - log(bw)
 
   if (!log.) y <- exp(y)
   

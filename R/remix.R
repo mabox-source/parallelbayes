@@ -56,11 +56,18 @@
 #' @param loglik.fun the log likelihood function. Optional if \code{loglik} is 
 #' supplied. See details.
 #' @param type an integer, either 1 or 2, specifying the weighting type to use. 
+#' @param w.type_1 an optional list of single column matrices containing the 
+#' unnormalised remix type 1 weights, the same as the output field. Supply this 
+#' to speed up computation of the type 2 weights if the type 1 weights have 
+#' already been computated.
 #' @param keep.type1 logical. If \code{TRUE} the type 1 weights are returned as 
 #' well as the type 2 weights when \code{type = 2}. This is faster than 
 #' computing the type 1 and type 2 weights separately.
 #' @param keep.unnormalised logical. If \code{TRUE} the unnormalised weights 
 #' are returned as well as the normalised.
+#' @param return.loglik logical. If \code{TRUE} the log likelihoods are 
+#' returned as an element of the output list. The format is the same as the 
+#' \code{loglik} argument, with elements as matrices.
 #' @param par.clust an optional cluster connection object from package 
 #' \code{parallel}. Ignored if \code{x} is a Spark table.
 #' @param ncores an optional integer specifying the number of CPU cores to use 
@@ -77,9 +84,11 @@
 #' \item{wn.type_1}{additionally returned if \code{keep.type1} is \code{TRUE}.}
 #' \item{w.type_1 and/or w.type_2}{the corresponding unnormalised weights, if 
 #' \code{keep.unnormalised} is \code{TRUE}
-#' Weights are returned as lists of matrices with 1 column and rows 
-#' corresponding to sample. The list elements correspond to partial posterior 
-#' (same as argument \code{theta}).
+#' \item{loglik}{log likelihoods, returned if \code{return.loglik} is 
+#' \code{TRUE}}
+#' Weights and log likelihoods are returned as lists of matrices with 1 column 
+#' and rows corresponding to sample. The list elements correspond to partial 
+#' posterior (same as argument \code{theta}).
 #'
 #' @export
 remix.weights <- function(
@@ -88,8 +97,10 @@ remix.weights <- function(
   loglik = NULL,
   loglik.fun,
   type = 2,
+  w.type_1 = NULL,
   keep.type1 = TRUE,
   keep.unnormalised = FALSE,
+  return.loglik = FALSE,
   par.clust = NULL,
   ncores = 1,
   verbose = FALSE,
@@ -193,32 +204,34 @@ remix.weights <- function(
   
   # Type 1 weights: divide out likelihood from partial posterior of origin; call 
   # it w.denominator.
-  if (verbose) message("Computing type 1 weights...")
-  w.denominator <- matrix(ll.array[c(outer(1:H, (0:(dim(ll.array)[2] - 1)) * H, FUN = "+")) + (pp.inds - 1) * H * dim(ll.array)[2]], H, dim(ll.array)[2])
+  if (is.null(w.type_1)) {
+    if (verbose) message("Computing type 1 weights...")
+    w.denominator <- matrix(ll.array[c(outer(1:H, (0:(dim(ll.array)[2] - 1)) * H, FUN = "+")) + (pp.inds - 1) * H * dim(ll.array)[2]], H, dim(ll.array)[2])
   
-  w.type_1 <- matrix(w.numerator - w.denominator, dim(w.numerator)[1], dim(w.numerator)[2])
-  # Need the shard specific sums of type 1 weights for normalisation of 
-  # type 1 and for the mixture estimator in type 2. Split into list first to 
-  # facilitate this.
-  # Split only preserves dimensions on data.frames, so convert to df first.
-  w.type_1 <- split(as.data.frame(w.type_1), params$pp.inds)
-  w.type_1 <- lapply(w.type_1, as.matrix)
-  w.type_1 <- lapply(w.type_1, FUN = function(ww){dimnames(ww) <- NULL; ww})
-  names(w.type_1) <- NULL
-  if (verbose) message("Done.")
+    w.type_1 <- matrix(w.numerator - w.denominator, dim(w.numerator)[1], dim(w.numerator)[2])
+    # Need the shard specific sums of type 1 weights for normalisation of 
+    # type 1 and for the mixture estimator in type 2. Split into list first to 
+    # facilitate this.
+    # Split only preserves dimensions on data.frames, so convert to df first.
+    w.type_1 <- split(as.data.frame(w.type_1), params$pp.inds)
+    w.type_1 <- lapply(w.type_1, as.matrix)
+    w.type_1 <- lapply(w.type_1, FUN = function(ww){dimnames(ww) <- NULL; ww})
+    names(w.type_1) <- NULL
+    if (verbose) message("Done.")
+  }
   # List of vectors.
   if (verbose) message("Computing type 1 weights' normalising constants...")
   w.sum_type_1 <- lapply(w.type_1, FUN = function(ww) {lrowsums(ww, 1)})
   if (verbose) message("Done.")
   # Normalise weights and convert to a list with the same structure as theta.
-  if (verbose) message("Normalising type 1 weights...")
   if (type == 1 || keep.type1) {
+    if (verbose) message("Normalising type 1 weights...")
     for (i in 1:n_shards) {
       if (any(!is.finite(w.sum_type_1[[i]]))) message(paste0("Sum of type 1 weights for shard ", i, " is zero. NaN returned for normalised weights."))
     }
+    wn.type_1 <- mapply(FUN = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)}, w.type_1, w.sum_type_1, SIMPLIFY = FALSE)
+    if (verbose) message("Done.")
   }
-  wn.type_1 <- mapply(FUN = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)}, w.type_1, w.sum_type_1, SIMPLIFY = FALSE)
-  if (verbose) message("Done.")
   
   # Type 2 weights.
   if (type == 2) {
@@ -265,6 +278,7 @@ remix.weights <- function(
     out$wn.type_1 <- wn.type_1
   }
   out$Hvec <- Hvec
+  if (return.loglik) out$loglik <- loglik
   
   if (use_parallel && new_cluster) parallel::stopCluster(par.clust)
   

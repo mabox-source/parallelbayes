@@ -24,6 +24,13 @@ function. I have added my own Gibbs sampler, which makes use of `rpg`.
 with only $\frac{H^{total}}{M}$ samples. The remix (and naive pooling) methods 
 do not: you end up with $H^{total}$ samples. This is reflected in greater ESS 
 (see the vignettes).
+* I made type 1 weights an argument of the `remix.weights` function, so that we 
+can compute the type 2 weights after computing the type 1 weights only. This 
+allows us to get timings for both algorithms without wasting much time (much 
+computation is shared between the type 1 and type 2 weights). It will also 
+speed up the type 2 weight computation if `loglik` is also supplied as an 
+argument. This is why both `loglik` and `w.type_1` can be returned by 
+`remix.weights`.
 
 ## Spark notes
 

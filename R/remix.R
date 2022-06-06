@@ -426,7 +426,7 @@ remix.mean <- function(
 #' of values. This function is optimised to perform this without looping over 
 #' target values.
 #'
-#' @seealso \code{remix.mean}, \code{remix.weights}
+#' @seealso \code{remix.mkde}, \code{remix.mean}, \code{remix.weights}
 #'
 #' @param x a vector of values for which the density estimate is to be computed.
 #' @param theta a list of matrices, each containing samples of model parameters 
@@ -504,6 +504,106 @@ remix.kde <- function(
   return(y)
 }
 
+#' Monte Carlo estimate of multivariate posterior density
+#'
+#' Compute a KDE estimate of the posterior density evaluated at a number of 
+#' values of a multivariate random variable. The posterior is estimated with a 
+#' Monte Carlo sample weighted by the remix type 1 or type 2 importance 
+#' weights.
+#'
+#' The output of this function is the same as \code{remix.mean} with a 
+#' \code{FUN} argument being a multivariate Gaussian kernel function, evaluated 
+#' over a range of values. This function is optimised to perform this without 
+#' looping over target values.
+#'
+#' @seealso \code{remix.kde}, \code{remix.mean}, \code{remix.weights}
+#'
+#' @param x a vector of values for which the density estimate is to be computed.
+#' @param theta a list of matrices, each containing samples of model parameters 
+#' from partial posterior distributions. Each matrix should have the same 
+#' number of columns, which correspond to model parameters (including 
+#' components of parameter vectors). Each list element corresponds to a single 
+#' partial posterior.
+#' @param wn a list of matrices, each containing normalised weights, one for 
+#' each sample in \code{theta} and obtained using the 
+#' \code{\link{remix.weights}} function.
+#' @param BW symmetric positive definite matrix, the smoothing bandwidth to be 
+#' used, as a covariance matrix. The kernels are scaled such that this is the 
+#' covariance matrix of the (multivariate Gaussian) smoothing kernel.
+#' @param type an integer, either 1 or 2, specifying the weighting type used.
+#' @param Hvec an optional vector specifying the number of samples taken from 
+#' each partial posterior.
+#' @param log. logical. If \code{TRUE}, density estimates are returned on the 
+#' (natural) log scale.
+#' @param mem.limit a positive value specifying the memory permitted for large 
+#' arrays, in bytes. The function features a computational step that can 
+#' consume a lot of memory. Increase this for a speed up or decrease it if 
+#' memory is constrained.
+#'
+#' @return A vector the same length as \code{x} of density estimates.
+#' @export
+remix.mkde <- function(
+  x,
+  theta,
+  wn,
+  BW,
+  type = 2,
+  Hvec = NULL,
+  log. = FALSE,
+  mem.limit = 1024^3
+) {
+  if (class(theta) != "list") stop("theta must be a list!")
+  if (class(wn) != "list") stop("wn must be a list!")
+  if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
+  if (any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
+  if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
+  # Check BW is a symmetric positive definite matrix.
+  if (class(BW) != "matrix") stop("BW must be a symmetric positive definite matrix!")
+  if (!isSymmetric(BW) || any(eigen(BW, symmetric = TRUE)$values <= 0)) stop("BW must be a symmetric positive definite matrix!")
+
+  if (is.null(Hvec)) {
+    Hvec <- sapply(theta, nrow)
+  } else if (length(Hvec) != length(theta)) {
+    stop("There should be one element of Hvec for each element of theta!")
+  }
+  H <- sum(Hvec)
+  d <- ncol(x)
+  
+  # In type 1 we need to add the mixture distribution weights (these are already 
+  # implicit in the type 2 weight definition).
+  if (type == 1) {
+    l_mixture_weight <- log(Hvec) - log(sum(Hvec))
+    wn <- mapply(FUN = function(wi, m) {wi + m}, wn, l_mixture_weight, SIMPLIFY = FALSE)
+  }
+  
+  # Collect samples and weights.
+  theta <- abind::abind(theta, along = 1)
+  wn <- unlist(wn)
+  
+  n <- length(x)
+  y <- rep(-Inf, n)
+  mem.req <- sum(Hvec) * n * 8
+  n_chunks <- min(ceiling(mem.req / mem.limit), n)
+  nk <- ceiling(n / n_chunks)
+  theta.rep <- array(rep(theta, each = nk), dim = c(nk, H, d))
+  for (k in 1:n_chunks) {
+    if ((k - 1) * nk + 1 > n) break
+    chunk.inds <- ((k - 1) * nk + 1):min(k * nk, n)
+    x.dist <- matrix(sweep(theta.rep[1:length(chunk.inds),,,drop = FALSE], MARGIN = c(1,3), STATS = x[chunk.inds,,drop = FALSE], FUN = "-", check.margin = FALSE), length(chunk.inds) * H, d)
+    f <- sweep(
+      matrix(mvtnorm::dmvnorm(x.dist, sigma = BW, log = TRUE, checkSymmetry = FALSE), length(chunk.inds), H),
+      MARGIN = 2,
+      STATS = wn,
+      check.margin = FALSE
+    )
+    y[chunk.inds] <- lrowsums(f, 2)
+  }
+
+  if (!log.) y <- exp(y)
+  
+  return(y)
+}
 
 #' Monte Carlo estimate of a quantile of a univariate function
 #'

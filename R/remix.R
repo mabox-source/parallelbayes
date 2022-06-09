@@ -439,7 +439,11 @@ remix.mean <- function(
 #' \code{\link{remix.weights}} function.
 #' @param bw the smoothing bandwidth to be used. The kernels are scaled such 
 #' that this is the standard deviation of the (Gaussian) smoothing kernel.
-#' @param type an integer, either 1 or 2, specifying the weighting type used.
+#' @param type an integer, either 0, 1 or 2, specifying the weighting type 
+#' used. Types 1 and 2 refer to the remix weighting algorithms (see 
+#' \code{remix.weights}). Type 0 can be used to use uniform weights, which 
+#' allows one to supply samples from another algorithm; in this case, \code{wn} 
+#' is not required.
 #' @param Hvec an optional vector specifying the number of samples taken from 
 #' each partial posterior.
 #' @param log. logical. If \code{TRUE}, density estimates are returned on the 
@@ -462,10 +466,11 @@ remix.kde <- function(
   mem.limit = 1024^3
 ) {
   if (class(theta) != "list") stop("theta must be a list!")
-  if (class(wn) != "list") stop("wn must be a list!")
+  if (!(type %in% 0:2)) stop("type must be 0, 1 or 2!")
+  if (type == 0) warning("Using uniform weights.")
+  if (type != 0 && class(wn) != "list") stop("wn must be a list!")
+  if (type != 0 && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
-  if (any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
-  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
   if (bw <= 0) stop("bw must be positive!")
 
@@ -484,11 +489,16 @@ remix.kde <- function(
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  wn <- unlist(wn)
+  if (type != 0) {
+    wn <- unlist(wn)
+  } else {
+    wn <- matrix(-log(H), H, 1)
+  }
   
   n <- length(x)
   y <- rep(-Inf, n)
-  mem.req <- sum(Hvec) * n * 8
+  buffer <- 1.5
+  mem.req <- (n + sum(Hvec) * n) * 8 * buffer
   n_chunks <- min(ceiling(mem.req / mem.limit), n)
   nk <- ceiling(n / n_chunks)
   for (k in 1:n_chunks) {
@@ -530,7 +540,11 @@ remix.kde <- function(
 #' @param BW symmetric positive definite matrix, the smoothing bandwidth to be 
 #' used, as a covariance matrix. The kernels are scaled such that this is the 
 #' covariance matrix of the (multivariate Gaussian) smoothing kernel.
-#' @param type an integer, either 1 or 2, specifying the weighting type used.
+#' @param type an integer, either 0, 1 or 2, specifying the weighting type 
+#' used. Types 1 and 2 refer to the remix weighting algorithms (see 
+#' \code{remix.weights}). Type 0 can be used to use uniform weights, which 
+#' allows one to supply samples from another algorithm; in this case, \code{wn} 
+#' is not required.
 #' @param Hvec an optional vector specifying the number of samples taken from 
 #' each partial posterior.
 #' @param log. logical. If \code{TRUE}, density estimates are returned on the 
@@ -553,10 +567,11 @@ remix.mkde <- function(
   mem.limit = 1024^3
 ) {
   if (class(theta) != "list") stop("theta must be a list!")
-  if (class(wn) != "list") stop("wn must be a list!")
+  if (!(type %in% 0:2)) stop("type must be 0, 1 or 2!")
+  if (type == 0) warning("Using uniform weights.")
+  if (type != 0 && class(wn) != "list") stop("wn must be a list!")
+  if (type != 0 && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
-  if (any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
-  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
   # Check BW is a symmetric positive definite matrix.
   if (class(BW) != "matrix") stop("BW must be a symmetric positive definite matrix!")
@@ -567,23 +582,28 @@ remix.mkde <- function(
   } else if (length(Hvec) != length(theta)) {
     stop("There should be one element of Hvec for each element of theta!")
   }
-  H <- sum(Hvec)
+  H <- as.numeric(sum(Hvec))
   d <- ncol(x)
   
   # In type 1 we need to add the mixture distribution weights (these are already 
   # implicit in the type 2 weight definition).
   if (type == 1) {
-    l_mixture_weight <- log(Hvec) - log(sum(Hvec))
+    l_mixture_weight <- log(Hvec) - log(H)
     wn <- mapply(FUN = function(wi, m) {wi + m}, wn, l_mixture_weight, SIMPLIFY = FALSE)
   }
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  wn <- unlist(wn)
+  if (type != 0) {
+    wn <- unlist(wn)
+  } else {
+    wn <- matrix(-log(H), H, 1)
+  }
   
-  n <- length(x)
+  n <- nrow(x)
   y <- rep(-Inf, n)
-  mem.req <- sum(Hvec) * n * 8
+  buffer <- 1.5
+  mem.req <- (n + H * n + 2 * H * n * d) * 8 * buffer
   n_chunks <- min(ceiling(mem.req / mem.limit), n)
   nk <- ceiling(n / n_chunks)
   theta.rep <- array(rep(theta, each = nk), dim = c(nk, H, d))
@@ -594,7 +614,8 @@ remix.mkde <- function(
     f <- sweep(
       matrix(mvtnorm::dmvnorm(x.dist, sigma = BW, log = TRUE, checkSymmetry = FALSE), length(chunk.inds), H),
       MARGIN = 2,
-      STATS = wn,
+      STATS = c(wn),
+      FUN = "+",
       check.margin = FALSE
     )
     y[chunk.inds] <- lrowsums(f, 2)

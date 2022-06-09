@@ -134,7 +134,7 @@ f <- function(df, context) {
   set.seed(context$seeds[part])
 
   n <- nrow(df)
-  x.bar <- colMeans(df[,-1])
+  x.bar <- colMeans(df[,-1,drop = FALSE])
 
   for (h in 1:context$H) {
     samples.part[h,1 + 1:context$d] <- MASS::mvrnorm(1, x.bar, 1 / n * context$Sigma)
@@ -475,8 +475,8 @@ f <- function(df, context) {
   use_fractionated_prior <- charmatch(tolower(context$prior), c("proper", "fractionated")) == 2
 
   n <- nrow(df)
-  x.bar <- colMeans(df[,-1])
-  S <- crossprod(sweep(df[,-1], MARGIN = 2, STATS = x.bar, FUN = "-"))
+  x.bar <- colMeans(df[,-1,drop = FALSE])
+  S <- crossprod(sweep(df[,-1,drop = FALSE], MARGIN = 2, STATS = x.bar, FUN = "-"))
   lower_triangle <- lower.tri(S, diag = TRUE)
 
   for (h in 1:context$H) {

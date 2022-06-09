@@ -240,26 +240,3 @@ logistic.sampler <- function(
   ))
 }
 
-mkde <- function(
-  x, v, BW, log. = FALSE, mem.limit = 1024^3
-) {
-  n <- nrow(x)
-  d <- ncol(x)
-  nv <- nrow(v)
-  mu.hat <- rep(-Inf, nv)
-  mem.req <- n * d * nv * 8
-  n_chunks <- ceiling(mem.req / mem.limit)
-  nv_k <- ceiling(nv / n_chunks)
-  for (k in 1:n_chunks) {
-    if ((k - 1) * nv_k + 1 > nv) break
-    chunk_inds <- ((k - 1) * nv_k + 1):min(k * nv_k, nv)
-    vx <- array(rep(x, each = length(chunk_inds)), dim = c(length(chunk_inds), n, d))
-    vx <- sweep(vx, MARGIN = c(1,3), STATS = v[chunk_inds,,drop = FALSE], FUN = "-", check.margin = FALSE)
-    dens <- matrix(mvtnorm::dmvnorm(matrix(vx, length(chunk_inds) * n, d), sigma = BW, log = TRUE), length(chunk_inds), n)
-    mu.hat[chunk_inds] <- lrowsums(dens, 2)
-  }
-  mu.hat <- mu.hat - log(n)
-  if (!log.) mu.hat <- exp(mu.hat)
-  
-  return(mu.hat)
-}

@@ -239,4 +239,42 @@ logistic.sampler <- function(
     params = params
   ))
 }
+#' Verify an existing or initialise a new parallel cluster
+#'
+#' This is a wrapper of \code{parallel::detectCores} and 
+#' \code{parallel::makeCluster}. 
+#'
+#' @param par.clust an optional cluster connection object from package 
+#' \code{parallel}.
+#' @param ncores an optional integer specifying the number of CPU cores to use 
+#' (see \code{\link[parallel]{makeCluster}}).
+#'
+#' @return A list containing fields:
+#' \item{par.clust}{Cluster connection object from package \code{parallel}.}
+#' \item{valid}{Logical. \code{TRUE} if \code{par.clust} is working.}
+#' \item{new}{Logical. \code{TRUE} if \code{par.clust} was created by this 
+#' function.}
+#' \item{ncores}{Integer. The number of cores used by \code{par.clust}.}
+#'
+#' @export
+parallel.start <- function(par.clust = NULL, ncores = 1) {
+  if (!is.null(par.clust) && class(par.clust)[1] == "SOCKcluster" && require(parallel)) {
+    valid <- TRUE
+    new <- FALSE
+  } else if (is.null(par.clust) && ncores > 1 && require(parallel)) {
+    new <- TRUE
+    n_cores_available <- parallel::detectCores()
+    if (ncores > n_cores_available) {
+      ncores <- n_cores_available
+      message(paste0("Using the maximum number of CPU cores available (", n_cores_available, ")"))
+    }
+    par.clust <- parallel::makeCluster(ncores)
+    valid <- TRUE
+  } else {
+    if (ncores > 1) message("Package parallel not found, using ncores = 1.")
+    valid <- FALSE
+    new <- FALSE
+  }
 
+  return(list(par.clust = par.clust, valid = valid, new = new, ncores = ncores))
+}

@@ -119,24 +119,7 @@ remix.weights <- function(
     if (!("list" %in% class(x))) stop("x must be a Spark table or a list!")
     use_spark <- FALSE
   }
-  if (!use_spark && !is.null(par.clust) && class(par.clust)[1] == "SOCKcluster" && require(parallel)) {
-    use_parallel <- TRUE
-    new_cluster <- FALSE
-  } else if (!use_spark && is.null(par.clust) && ncores > 1 && require(parallel)) {
-    use_parallel <- TRUE
-    new_cluster <- TRUE
-    n_cores_available <- parallel::detectCores()
-    if (ncores > n_cores_available) {
-      ncores <- n_cores_available
-      message(paste0("Using the maximum number of CPU cores available (", n_cores_available, ")"))
-    }
-    par.clust <- parallel::makeCluster(ncores)
-  } else {
-    if (!use_spark && ncores > 1) message("Package parallel not found, using ncores = 1.")
-    ncores <- 1
-    use_parallel <- FALSE
-  }
-  
+  if (!use_spark) par <- parallel.start(par.clust, ncores) 
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
   n_shards <- length(theta)
   Hvec <- sapply(theta, nrow)
@@ -159,7 +142,7 @@ remix.weights <- function(
   # Other parameters.
   params <- list(
     use_spark = use_spark,
-    use_parallel = use_parallel,
+    use_parallel = par$valid,
     # Pool samples into one matrix.
     theta = do.call(rbind, theta),
     Hvec = Hvec,
@@ -184,8 +167,8 @@ remix.weights <- function(
       # Split into list on the first column: data shard.
       loglik <- split(local.res[,-1], local.res[,1])
       loglik <- lapply(loglik, as.matrix)
-    } else if (use_parallel) {
-      loglik <- parLapply(par.clust, x, likelihood.worker, context = ctx)
+    } else if (params$use_parallel) {
+      loglik <- parallel::parLapply(par$par.clust, x, likelihood.worker, context = ctx)
     } else {
       loglik <- lapply(x, likelihood.worker, ctx)
     }
@@ -221,7 +204,11 @@ remix.weights <- function(
   }
   # List of vectors.
   if (verbose) message("Computing type 1 weights' normalising constants...")
-  w.sum_type_1 <- lapply(w.type_1, FUN = function(ww) {lrowsums(ww, 1)})
+  if (params$use_parallel) {
+    w.sum_type_1 <- parallel::parLapply(par$par.clust, w.type_1, fun = function(ww) {lrowsums(ww, 1)})
+  } else {
+    w.sum_type_1 <- lapply(w.type_1, FUN = function(ww) {lrowsums(ww, 1)})
+  }
   if (verbose) message("Done.")
   # Normalise weights and convert to a list with the same structure as theta.
   if (type == 1 || keep.type1) {
@@ -229,7 +216,18 @@ remix.weights <- function(
     for (i in 1:n_shards) {
       if (any(!is.finite(w.sum_type_1[[i]]))) message(paste0("Sum of type 1 weights for shard ", i, " is zero. NaN returned for normalised weights."))
     }
-    wn.type_1 <- mapply(FUN = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)}, w.type_1, w.sum_type_1, SIMPLIFY = FALSE)
+    if (par$valid) {
+      wn.type_1 <- parallel::clusterMap(
+          par.clust,
+          fun = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)},
+          w.type_1,
+          w.sum_type_1,
+          SIMPLIFY = FALSE
+        )
+    } else {
+      wn.type_1 <- mapply(FUN = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)}, w.type_1, w.sum_type_1, SIMPLIFY = FALSE)
+    }
+
     if (verbose) message("Done.")
   }
   
@@ -280,7 +278,7 @@ remix.weights <- function(
   out$Hvec <- Hvec
   if (return.loglik) out$loglik <- loglik
   
-  if (use_parallel && new_cluster) parallel::stopCluster(par.clust)
+  if (par$new) parallel::stopCluster(par.clust)
   
   return(out)
 }
@@ -510,7 +508,7 @@ remix.kde <- function(
   y <- y - (1 / 2) * log(2 * pi) - log(bw)
 
   if (!log.) y <- exp(y)
-  
+
   return(y)
 }
 
@@ -622,7 +620,7 @@ remix.mkde <- function(
   }
 
   if (!log.) y <- exp(y)
-  
+
   return(y)
 }
 

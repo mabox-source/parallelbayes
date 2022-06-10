@@ -76,23 +76,7 @@ consensus.weights <- function(
     use_spark <- FALSE
   }
   if (any(Hvec != Hvec[1])) stop("Each set of samples must have the same number of realisations!")
-  if (!use_spark && !is.null(par.clust) && class(par.clust)[1] == "SOCKcluster" && require(parallel)) {
-    use_parallel <- TRUE
-    new_cluster <- FALSE
-  } else if (!use_spark && is.null(par.clust) && ncores > 1 && require(parallel)) {
-    use_parallel <- TRUE
-    new_cluster <- TRUE
-    n_cores_available <- parallel::detectCores()
-    if (ncores > n_cores_available) {
-      ncores <- n_cores_available
-      message(paste0("Using the maximum number of CPU cores available (", n_cores_available, ")"))
-    }
-    par.clust <- parallel::makeCluster(ncores)
-  } else {
-    if (!use_spark && ncores > 1) message("Package parallel not found, using ncores = 1.")
-    ncores <- 1
-    use_parallel <- FALSE
-  }
+  if (!use_spark) par <- parallel.start(par.clust, ncores) 
 
   # First derive weights.
 
@@ -107,8 +91,8 @@ consensus.weights <- function(
     # Check for error flag.
     if (any(is.na(local.res[,2]))) stop("Insufficient useable samples!") 
     w <- split(local.res[,2], local.res[,1])
-  } else if (use_parallel) {
-    w <- parLapply(par.clust, theta, consensus.worker, context = ctx)
+  } else if (par$valid) {
+    w <- parallel::parLapply(par.clust, theta, consensus.worker, context = ctx)
     if (any(sapply(w, function(wi) {is.na(wi[,1])}))) stop("Insufficient useable samples!")
   } else {
     w <- lapply(theta, consensus.worker, ctx)
@@ -151,10 +135,10 @@ consensus.weights <- function(
         theta.w.pooled <- lapply(theta.w.pooled, FUN = as.matrix)
         theta.w.pooled <- rowSums(abind::abind(theta.w.pooled, along = 3), dims = 2)
       }
-    } else if (use_parallel) {
+    } else if (par$valid) {
       theta.w.pooled <- rowSums(abind::abind(
         clusterMap(
-          paar.clust,
+          par.clust,
           fun = function(th, wi) {th %*% wi},
           theta,
           w,
@@ -183,7 +167,7 @@ consensus.weights <- function(
   )
   if (use_spark) out$theta.w.spark <- theta.w.spark
   if (return.pooled) out$theta.w.pooled <- theta.w.pooled
-  if (use_parallel && new_cluster) stopCluster(par.clust)
+  if (par$new) stopCluster(par.clust)
 
   out
 }

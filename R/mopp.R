@@ -1,4 +1,4 @@
-#' Calculate the remix algorithm sample importance weights
+#' Calculate the MoPP algorithm sample importance weights
 #'
 #' Computes importance weights for the samples drawn from all partial posterior 
 #' distributions to form a pooled, weighted sample that can be used to 
@@ -57,7 +57,7 @@
 #' supplied. See details.
 #' @param type an integer, either 1 or 2, specifying the weighting type to use. 
 #' @param w.type_1 an optional list of single column matrices containing the 
-#' unnormalised remix type 1 weights, the same as the output field. Supply this 
+#' unnormalised MoPP type 1 weights, the same as the output field. Supply this 
 #' to speed up computation of the type 2 weights if the type 1 weights have 
 #' already been computated.
 #' @param keep.type1 logical. If \code{TRUE} the type 1 weights are returned as 
@@ -91,7 +91,7 @@
 #' posterior (same as argument \code{theta}).
 #'
 #' @export
-remix.weights <- function(
+mopp.weights <- function(
   x,
   theta,
   loglik = NULL,
@@ -329,8 +329,8 @@ likelihood.worker <- function(df, context) {
 #' Monte Carlo estimate of the expectation of a univariate function
 #'
 #' Compute a Monte Carlo estimate of the expectation of a function of model 
-#' parameters. Samples of the parameter vector are weighted using the remix 
-#' type 1 or type 2 importance weights.
+#' parameters. Samples of the parameter vector are weighted using the MoPP type 
+#' 1 or type 2 importance weights.
 #'
 #' \code{FUN} should take a matrix argument and return a matrix. The argument 
 #' matrix should be a matrix of samples, just like the elements of 
@@ -338,7 +338,7 @@ likelihood.worker <- function(df, context) {
 #' have the same number of rows. The rows of both matrices correspond to 
 #' samples.
 #'
-#' @seealso \code{remix.quantile}, \code{remix.weights}
+#' @seealso \code{mopp.quantile}, \code{mopp.weights}
 #'
 #' @param theta a list of matrices, each containing samples of model parameters 
 #' from partial posterior distributions. Each matrix should have the same 
@@ -347,7 +347,7 @@ likelihood.worker <- function(df, context) {
 #' partial posterior.
 #' @param wn a list of matrices, each containing normalised weights, one for 
 #' each sample in \code{theta} and obtained using the 
-#' \code{\link{remix.weights}} function.
+#' \code{\link{mopp.weights}} function.
 #' @param FUN a matrix-valued function that we wish to estimate the expected 
 #' value of. See details.
 #' @param type an integer, either 1 or 2, specifying the weighting type used.
@@ -357,7 +357,7 @@ likelihood.worker <- function(df, context) {
 #' @return A vector of weighted sample means of \code{FUN}, approximating the 
 #' posterior expectation.
 #' @export
-remix.mean <- function(
+mopp.mean <- function(
   theta,
   wn,
   FUN = identity,
@@ -416,15 +416,14 @@ remix.mean <- function(
 #'
 #' Compute a KDE estimate of the posterior density evaluated at a number of 
 #' values of a univariate random variable. The posterior is estimated with a 
-#' Monte Carlo sample weighted by the remix type 1 or type 2 importance 
-#' weights.
+#' Monte Carlo sample weighted by the MoPP type 1 or type 2 importance weights.
 #'
-#' The output of this function is the same as \code{remix.mean} with a 
+#' The output of this function is the same as \code{mopp.mean} with a 
 #' \code{FUN} argument being a Gaussian kernel function, evaluated over a range 
 #' of values. This function is optimised to perform this without looping over 
 #' target values.
 #'
-#' @seealso \code{remix.mkde}, \code{remix.mean}, \code{remix.weights}
+#' @seealso \code{mopp.mkde}, \code{mopp.mean}, \code{mopp.weights}
 #'
 #' @param x a vector of values for which the density estimate is to be computed.
 #' @param theta a list of matrices, each containing samples of model parameters 
@@ -434,12 +433,12 @@ remix.mean <- function(
 #' partial posterior.
 #' @param wn a list of matrices, each containing normalised weights, one for 
 #' each sample in \code{theta} and obtained using the 
-#' \code{\link{remix.weights}} function.
+#' \code{\link{mopp.weights}} function.
 #' @param bw the smoothing bandwidth to be used. The kernels are scaled such 
 #' that this is the standard deviation of the (Gaussian) smoothing kernel.
 #' @param type an integer, either 0, 1 or 2, specifying the weighting type 
-#' used. Types 1 and 2 refer to the remix weighting algorithms (see 
-#' \code{remix.weights}). Type 0 can be used to use uniform weights, which 
+#' used. Types 1 and 2 refer to the MoPP weighting algorithms (see 
+#' \code{mopp.weights}). Type 0 can be used to use uniform weights, which 
 #' allows one to supply samples from another algorithm; in this case, \code{wn} 
 #' is not required.
 #' @param Hvec an optional vector specifying the number of samples taken from 
@@ -453,7 +452,7 @@ remix.mean <- function(
 #'
 #' @return A vector the same length as \code{x} of density estimates.
 #' @export
-remix.kde <- function(
+mopp.kde <- function(
   x,
   theta,
   wn,
@@ -516,15 +515,14 @@ remix.kde <- function(
 #'
 #' Compute a KDE estimate of the posterior density evaluated at a number of 
 #' values of a multivariate random variable. The posterior is estimated with a 
-#' Monte Carlo sample weighted by the remix type 1 or type 2 importance 
-#' weights.
+#' Monte Carlo sample weighted by the MoPP type 1 or type 2 importance weights.
 #'
-#' The output of this function is the same as \code{remix.mean} with a 
+#' The output of this function is the same as \code{mopp.mean} with a 
 #' \code{FUN} argument being a multivariate Gaussian kernel function, evaluated 
 #' over a range of values. This function is optimised to perform this without 
 #' looping over target values.
 #'
-#' @seealso \code{remix.kde}, \code{remix.mean}, \code{remix.weights}
+#' @seealso \code{mopp.kde}, \code{mopp.mean}, \code{mopp.weights}
 #'
 #' @param x a vector of values for which the density estimate is to be computed.
 #' @param theta a list of matrices, each containing samples of model parameters 
@@ -534,13 +532,13 @@ remix.kde <- function(
 #' partial posterior.
 #' @param wn a list of matrices, each containing normalised weights, one for 
 #' each sample in \code{theta} and obtained using the 
-#' \code{\link{remix.weights}} function.
+#' \code{\link{mopp.weights}} function.
 #' @param BW symmetric positive definite matrix, the smoothing bandwidth to be 
 #' used, as a covariance matrix. The kernels are scaled such that this is the 
 #' covariance matrix of the (multivariate Gaussian) smoothing kernel.
 #' @param type an integer, either 0, 1 or 2, specifying the weighting type 
-#' used. Types 1 and 2 refer to the remix weighting algorithms (see 
-#' \code{remix.weights}). Type 0 can be used to use uniform weights, which 
+#' used. Types 1 and 2 refer to the MoPP weighting algorithms (see 
+#' \code{mopp.weights}). Type 0 can be used to use uniform weights, which 
 #' allows one to supply samples from another algorithm; in this case, \code{wn} 
 #' is not required.
 #' @param Hvec an optional vector specifying the number of samples taken from 
@@ -554,7 +552,7 @@ remix.kde <- function(
 #'
 #' @return A vector the same length as \code{x} of density estimates.
 #' @export
-remix.mkde <- function(
+mopp.mkde <- function(
   x,
   theta,
   wn,
@@ -627,8 +625,8 @@ remix.mkde <- function(
 #' Monte Carlo estimate of a quantile of a univariate function
 #'
 #' Compute a Monte Carlo estimate of quantiles of a function of model 
-#' parameters. Samples of the parameter vector are weighted using the remix 
-#' type 1 or type 2 importance weights.
+#' parameters. Samples of the parameter vector are weighted using the MoPP type 
+#' 1 or type 2 importance weights.
 #'
 #' Whilst \code{FUN} is matrix-valued, with possibly >1 columns, the estimated 
 #' quantiles returned are quantiles of each dimension of the function 
@@ -640,7 +638,7 @@ remix.mkde <- function(
 #' have the same number of rows. The rows of both matrices correspond to 
 #' samples.
 #'
-#' @seealso \code{remix.mean}, \code{remix.weights}
+#' @seealso \code{mopp.mean}, \code{mopp.weights}
 #'
 #' @param theta a list of matrices, each containing samples of model parameters 
 #' from partial posterior distributions. Each matrix should have the same 
@@ -651,7 +649,7 @@ remix.mkde <- function(
 #' \code{FUN} to be estimated.
 #' @param wn a list of matrices, each containing normalised weights, one for 
 #' each sample in \code{theta} and obtained using the 
-#' \code{\link{remix.weights}} function.
+#' \code{\link{mopp.weights}} function.
 #' @param FUN a matrix-valued function that we wish to estimate the expected 
 #' value of. See details.
 #' @param type an integer, either 1 or 2, specifying the weighting type used.
@@ -664,7 +662,7 @@ remix.mkde <- function(
 #' \code{\link{uniroot}}, the first row of which contains the weighted 
 #' quantiles of \code{FUN}.
 #' @export
-remix.quantile <- function(
+mopp.quantile <- function(
   theta,
   prob,
   wn,
@@ -729,7 +727,7 @@ remix.quantile <- function(
 
 
 
-#' Smooth the remix weights using the generalised Pareto distribution
+#' Smooth the MoPP weights using the generalised Pareto distribution
 #'
 #' @section References
 #' \itemize{
@@ -741,7 +739,6 @@ remix.quantile <- function(
 #' (PSIS) algorithm of Vehtari et al (2015) is applied to the raw importance 
 #' weights.
 #'
-#' @export
 pareto_smooth <- function (
 
 ) {

@@ -1,11 +1,11 @@
 ---
-title: "Remix Examples in the Beta-Bernoulli Model"
+title: "MoPP Examples in the Beta-Bernoulli Model"
 author: "Marc Box"
 date: "`r Sys.Date()`"
 output: rmarkdown::html_vignette
 bibliography: "references.bib"
 vignette: >
-  %\VignetteIndexEntry{Remix Examples in the Beta-Bernoulli Model}
+  %\VignetteIndexEntry{MoPP Examples in the Beta-Bernoulli Model}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -17,7 +17,7 @@ knitr::opts_chunk$set(
 )
 ```
 
-# Remix Examples in the Beta-Bernoulli Model
+# MoPP Examples in the Beta-Bernoulli Model
 
 The beta-Bernoulli model is 
 
@@ -27,7 +27,7 @@ pior.
 
 The posterior distribution in Scott et al 2016's example is positively skewed, 
 and so non-normal, presenting a particular challenge for the Consensus 
-algorithm. We will show that this is not a challenge for the remix algorithm, 
+algorithm. We will show that this is not a challenge for the MoPP algorithm, 
 which we contend is because we are able to use the intended, and proper, prior 
 distribution rather than the "fractionated" version.
 
@@ -202,7 +202,7 @@ ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
 
 ## Pooling algorithms
 
-Here we define the log likelihood function, to be used by remix.
+Here we define the log likelihood function, to be used by MoPP.
 
 ```{r}
 loglik.fun <- function(theta, x) {
@@ -212,11 +212,11 @@ loglik.fun <- function(theta, x) {
 }
 ```
 
-Remix.
+MoPP.
 
 ```{r}
 timer <- proc.time()
-remix.out <- remix.weights(
+mopp.out <- mopp.weights(
   x.list,
   samples.part,
   loglik.fun = loglik.fun,
@@ -266,7 +266,7 @@ sdpe.out <- dpe.master(
 print(proc.time() - timer)
 ```
 
-Plot the remix and consensus algorithm approximations of the posterior density.
+Plot the MoPP and consensus algorithm approximations of the posterior density.
 
 ```{r}
 dens <- density(consensus2.out$theta.w.pooled)
@@ -277,27 +277,27 @@ plot_data <- rbind(posterior_plot_data, data.frame(
 ))
 
 x.grid <- seq(quantile(samples.full, prob = 1e-4), quantile(samples.full, prob = 1 - 1e-4), by = dens$bw)
-dens.remix <- remix.kde(
+dens.mopp <- mopp.kde(
   x.grid,
   samples.part,
-  remix.out$wn.type_2,
+  mopp.out$wn.type_2,
   bw = dens$bw
 )
 plot_data <- rbind(plot_data, data.frame(
   Lambda = x.grid,
-  Density = dens.remix,
-  Series = rep("Remix (type 2)", length(x.grid))
+  Density = dens.mopp,
+  Series = rep("MoPP (type 2)", length(x.grid))
 ))
 
 ggplot2::ggplot(plot_data, ggplot2::aes(x = Lambda, y = Density, linetype = Series)) +
 ggplot2::geom_line() +
 ggplot2::scale_x_continuous(name = expression(lambda)) +
-ggplot2::scale_linetype_manual(values = c("Posterior" = "solid", "Consensus (weighted)" = "dotted", "Remix (type 2)" = "dashed")) +
+ggplot2::scale_linetype_manual(values = c("Posterior" = "solid", "Consensus (weighted)" = "dotted", "MoPP (type 2)" = "dashed")) +
 ggplot2::theme_bw(base_size = 8) +
 ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
 ```
 
-Here is a quantile-quantile plot for the consensus and remix algorithms.
+Here is a quantile-quantile plot for the consensus and MoPP algorithms.
 
 ```{r}
 # True posterior quantiles.
@@ -314,13 +314,13 @@ qq_data <- data.frame(
   Series = rep("Consensus (weighted)", length(p.grid))
 )
 
-# Remix estimates.
-p.remix <- cumsum(exp(unlist(remix.out$wn.type_2)[order(unlist(samples.part))]))
-q.remix <- sort(unlist(samples.part))[findInterval(p.grid, p,remix, all.inside = TRUE)]
+# MoPP estimates.
+p.mopp <- cumsum(exp(unlist(mopp.out$wn.type_2)[order(unlist(samples.part))]))
+q.mopp <- sort(unlist(samples.part))[findInterval(p.grid, p.mopp, all.inside = TRUE)]
 qq_data <- rbind(qq_data, data.frame(
   Posterior_Quantile = q.post,
-  Estimated_Quantile = q.remix,
-  Series = rep("Remix (type 2)", length(p.grid))
+  Estimated_Quantile = q.mopp,
+  Series = rep("MoPP (type 2)", length(p.grid))
 ))
 
 # Add diagonal?
@@ -334,7 +334,7 @@ ggplot2::ggplot(qq_data, ggplot2::aes(x = Posterior_Quantile, y = Estimated_Quan
 ggplot2::geom_line() +
 ggplot2::scale_x_continuous(name = "Posterior quantile") +
 ggplot2::scale_y_continuous(name = "Estimated quantile") +
-ggplot2::scale_linetype_manual(values = c("Consensus (weighted)" = "dotted", "Remix (type 2)" = "dashed")) +
+ggplot2::scale_linetype_manual(values = c("Consensus (weighted)" = "dotted", "MoPP (type 2)" = "dashed")) +
 ggplot2::theme_bw(base_size = 8) +
 ggplot2::theme(
   panel.grid.minor = ggplot2::element_blank(),
@@ -355,12 +355,12 @@ We also estimate the effective sample size (ESS). "Roughly speaking, the ESS of
 a quantity of interest captures how many independent draws contain the same 
 amount of information as the dependent sample obtained by the MCMC algorithm" 
 (Vehtari et al 2019). The maximum possible for the consensus and DPE algorithms 
-is $\frac{H^{total}}{M}$; for the other methods, including remix, the maximum 
+is $\frac{H^{total}}{M}$; for the other methods, including MoPP, the maximum 
 possible is $H$.
 
 ```{r}
 posterior.estimates <- list()
-ess <- sapply(c("Vanilla", "Naive", "Remix 1", "Remix 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
+ess <- sapply(c("Vanilla", "Naive", "MoPP 1", "MoPP 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
 ```
 
 Full posterior sampling.
@@ -395,27 +395,27 @@ posterior.estimates[["Naive"]] <- apply(
 ess["Naive"] <- mcmcse::ess(unlist(samples.part))
 ```
 
-Remix algorithm 1.
+MoPP algorithm 1.
 
 ```{r}
-posterior.estimates[["Remix 1"]] <- rbind(
-  "Mean" = remix.mean(samples.part, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec),
-  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
-  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
-  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",]
+posterior.estimates[["MoPP 1"]] <- rbind(
+  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec),
+  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
+  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
+  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",]
 )
-posterior.estimates[["Remix 1"]] <- rbind(
-  posterior.estimates[["Remix 1"]],
-  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]]["Mean",] ^ 2)
+posterior.estimates[["MoPP 1"]] <- rbind(
+  posterior.estimates[["MoPP 1"]],
+  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 1"]]["Mean",] ^ 2)
 )
 
-ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec)) -
+ess["MoPP 1"] <- exp(2 * log(sum(mopp.out$Hvec)) -
   lrowsums(
     unlist(
       mapply(
         FUN = function(w, h) {2 * w + 2 * log(h)},
-        remix.out$wn.type_1,
-        remix.out$Hvec,
+        mopp.out$wn.type_1,
+        mopp.out$Hvec,
         SIMPLIFY = FALSE
       )
     )
@@ -423,21 +423,21 @@ ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec)) -
 )
 ```
 
-Remix algorithm 2.
+MoPP algorithm 2.
 
 ```{r}
-posterior.estimates[["Remix 2"]] <- rbind(
-  "Mean" = remix.mean(samples.part, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec),
-  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
-  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
-  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",]
+posterior.estimates[["MoPP 2"]] <- rbind(
+  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec),
+  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
+  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
+  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",]
 )
-posterior.estimates[["Remix 2"]] <- rbind(
-  posterior.estimates[["Remix 2"]],
-  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]]["Mean",] ^ 2)
+posterior.estimates[["MoPP 2"]] <- rbind(
+  posterior.estimates[["MoPP 2"]],
+  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 2"]]["Mean",] ^ 2)
 )
 
-ess["Remix 2"] <- exp(-lrowsums(2 * unlist(remix.out$wn.type_2)))
+ess["MoPP 2"] <- exp(-lrowsums(2 * unlist(mopp.out$wn.type_2)))
 ```
 
 Consensus Monte Carlo.
@@ -631,11 +631,11 @@ ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
 
 ## Pooling algorithms
 
-Remix.
+MoPP.
 
 ```{r}
 timer <- proc.time()
-remix.out <- remix.weights(
+mopp.out <- mopp.weights(
   x.list,
   samples.part,
   loglik.fun = loglik.fun,
@@ -683,7 +683,7 @@ sdpe.out <- dpe.master(
 print(proc.time() - timer)
 ```
 
-Plot the remix and consensus algorithm approximations of the posterior density.
+Plot the MoPP and consensus algorithm approximations of the posterior density.
 
 ```{r}
 dens <- density(consensus2.out$theta.w.pooled)
@@ -694,27 +694,27 @@ plot_data <- rbind(posterior_plot_data, data.frame(
 ))
 
 x.grid <- seq(quantile(samples.full, prob = 1e-4), quantile(samples.full, prob = 1 - 1e-4), by = dens$bw)
-dens.remix <- remix.kde(
+dens.mopp <- mopp.kde(
   x.grid,
   samples.part,
-  remix.out$wn.type_2,
+  mopp.out$wn.type_2,
   bw = dens$bw
 )
 plot_data <- rbind(plot_data, data.frame(
   Lambda = x.grid,
-  Density = dens.remix,
-  Series = rep("Remix (type 2)", length(x.grid))
+  Density = dens.mopp,
+  Series = rep("MoPP (type 2)", length(x.grid))
 ))
 
 ggplot2::ggplot(plot_data, ggplot2::aes(x = Lambda, y = Density, linetype = Series)) +
 ggplot2::geom_line() +
 ggplot2::scale_x_continuous(name = expression(lambda)) +
-ggplot2::scale_linetype_manual(values = c("Posterior" = "solid", "Consensus (weighted)" = "dotted", "Remix (type 2)" = "dashed")) +
+ggplot2::scale_linetype_manual(values = c("Posterior" = "solid", "Consensus (weighted)" = "dotted", "MoPP (type 2)" = "dashed")) +
 ggplot2::theme_bw(base_size = 8) +
 ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
 ```
 
-Here is a quantile-quantile plot for the consensus and remix algorithms.
+Here is a quantile-quantile plot for the consensus and MoPP algorithms.
 
 ```{r}
 # True posterior quantiles.
@@ -731,13 +731,13 @@ qq_data <- data.frame(
   Series = rep("Consensus (weighted)", length(p.grid))
 )
 
-# Remix estimates.
-p.remix <- cumsum(exp(unlist(remix.out$wn.type_2)[order(unlist(samples.part))]))
-q.remix <- sort(unlist(samples.part))[findInterval(p.grid, p,remix, all.inside = TRUE)]
+# MoPP estimates.
+p.mopp <- cumsum(exp(unlist(mopp.out$wn.type_2)[order(unlist(samples.part))]))
+q.mopp <- sort(unlist(samples.part))[findInterval(p.grid, p,mopp, all.inside = TRUE)]
 qq_data <- rbind(qq_data, data.frame(
   Posterior_Quantile = q.post,
-  Estimated_Quantile = q.remix,
-  Series = rep("Remix (type 2)", length(p.grid))
+  Estimated_Quantile = q.mopp,
+  Series = rep("MoPP (type 2)", length(p.grid))
 ))
 
 # Add diagonal?
@@ -751,7 +751,7 @@ ggplot2::ggplot(qq_data, ggplot2::aes(x = Posterior_Quantile, y = Estimated_Quan
 ggplot2::geom_line() +
 ggplot2::scale_x_continuous(name = "Posterior quantile") +
 ggplot2::scale_y_continuous(name = "Estimated quantile") +
-ggplot2::scale_linetype_manual(values = c("Consensus (weighted)" = "dotted", "Remix (type 2)" = "dashed")) +
+ggplot2::scale_linetype_manual(values = c("Consensus (weighted)" = "dotted", "MoPP (type 2)" = "dashed")) +
 ggplot2::theme_bw(base_size = 8) +
 ggplot2::theme(
   panel.grid.minor = ggplot2::element_blank(),
@@ -770,7 +770,7 @@ dimension.
 
 ```{r}
 posterior.estimates <- list()
-ess <- sapply(c("Vanilla", "Naive", "Remix 1", "Remix 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
+ess <- sapply(c("Vanilla", "Naive", "MoPP 1", "MoPP 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
 ```
 
 Full posterior sampling.
@@ -813,27 +813,27 @@ posterior.estimates[["Naive"]] <- apply(
 ess["Naive"] <- mcmcse::ess(unlist(samples.part))
 ```
 
-Remix algorithm 1.
+MoPP algorithm 1.
 
 ```{r}
-posterior.estimates[["Remix 1"]] <- rbind(
-  "Mean" = remix.mean(samples.part, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec),
-  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
-  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
-  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",]
+posterior.estimates[["MoPP 1"]] <- rbind(
+  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec),
+  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
+  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
+  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",]
 )
-posterior.estimates[["Remix 1"]] <- rbind(
-  posterior.estimates[["Remix 1"]],
-  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]]["Mean",] ^ 2)
+posterior.estimates[["MoPP 1"]] <- rbind(
+  posterior.estimates[["MoPP 1"]],
+  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 1"]]["Mean",] ^ 2)
 )
 
-ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec)) -
+ess["MoPP 1"] <- exp(2 * log(sum(mopp.out$Hvec)) -
   lrowsums(
     unlist(
       mapply(
         FUN = function(w, h) {2 * w + 2 * log(h)},
-        remix.out$wn.type_1,
-        remix.out$Hvec,
+        mopp.out$wn.type_1,
+        mopp.out$Hvec,
         SIMPLIFY = FALSE
       )
     )
@@ -841,21 +841,21 @@ ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec)) -
 )
 ```
 
-Remix algorithm 2.
+MoPP algorithm 2.
 
 ```{r}
-posterior.estimates[["Remix 2"]] <- rbind(
-  "Mean" = remix.mean(samples.part, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec),
-  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
-  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
-  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",]
+posterior.estimates[["MoPP 2"]] <- rbind(
+  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec),
+  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
+  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
+  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",]
 )
-posterior.estimates[["Remix 2"]] <- rbind(
-  posterior.estimates[["Remix 2"]],
-  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]]["Mean",] ^ 2)
+posterior.estimates[["MoPP 2"]] <- rbind(
+  posterior.estimates[["MoPP 2"]],
+  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 2"]]["Mean",] ^ 2)
 )
 
-ess["Remix 2"] <- exp(-lrowsums(2 * unlist(remix.out$wn.type_2)))
+ess["MoPP 2"] <- exp(-lrowsums(2 * unlist(mopp.out$wn.type_2)))
 ```
 
 Consensus Monte Carlo.

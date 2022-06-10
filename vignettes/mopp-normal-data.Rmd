@@ -1,11 +1,11 @@
 ---
-title: "Remix Examples with Normal Data"
+title: "MoPP Examples with Normal Data"
 author: "Marc Box"
 date: "`r Sys.Date()`"
 output: rmarkdown::html_vignette
 bibliography: "references.bib"
 vignette: >
-  %\VignetteIndexEntry{Remix Examples with Normal Data}
+  %\VignetteIndexEntry{MoPP Examples with Normal Data}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -17,7 +17,7 @@ knitr::opts_chunk$set(
 )
 ```
 
-# Remix Examples with Normal Data
+# MoPP Examples with Normal Data
 
 There are two models to consider: one where data are uncorrelated (the 
 off-diagonal elements of the covariance matrix are zero) and one where the data 
@@ -172,7 +172,7 @@ samples.part <- lapply(samples.part, FUN = as.matrix)
 
 ### Pooling algorithms
 
-Here we define the log likelihood function, to be used by remix. This is 
+Here we define the log likelihood function, to be used by MoPP. This is 
 specific to the model with $\Sigma$ known.
 
 ```{r}
@@ -186,11 +186,11 @@ loglik.fun <- function(theta, x, Sigma, d) {
 }
 ```
 
-Remix.
+MoPP.
 
 ```{r}
 timer <- proc.time()
-remix.out <- remix.weights(
+mopp.out <- mopp.weights(
   x.cluster,
   samples.part,
   loglik.fun = loglik.fun,
@@ -253,12 +253,12 @@ We also estimate the effective sample size (ESS). "Roughly speaking, the ESS of
 a quantity of interest captures how many independent draws contain the same 
 amount of information as the dependent sample obtained by the MCMC algorithm" 
 (Vehtari et al 2019). The maximum possible for the consensus and DPE algorithms 
-is $\frac{H^{total}}{M}$; for the other methods, including remix, the maximum 
+is $\frac{H^{total}}{M}$; for the other methods, including MoPP, the maximum 
 possible is $H$.
 
 ```{r}
 posterior.estimates <- list()
-ess <- sapply(c("Vanilla", "Naive", "Remix 1", "Remix 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
+ess <- sapply(c("Vanilla", "Naive", "MoPP 1", "MoPP 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
 ```
 
 Full posterior sampling.
@@ -301,27 +301,27 @@ posterior.estimates[["Naive"]] <- apply(
 ess["Naive"] <- mcmcse::multiESS(abind::abind(samples.part, along = 1))
 ```
 
-Remix algorithm 1.
+MoPP algorithm 1.
 
 ```{r}
-posterior.estimates[["Remix 1"]] <- rbind(
-  "Mean" = remix.mean(samples.part, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec),
-  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
-  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
-  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",]
+posterior.estimates[["MoPP 1"]] <- rbind(
+  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec),
+  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
+  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
+  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",]
 )
-posterior.estimates[["Remix 1"]] <- rbind(
-  posterior.estimates[["Remix 1"]],
-  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]]["Mean",] ^ 2)
+posterior.estimates[["MoPP 1"]] <- rbind(
+  posterior.estimates[["MoPP 1"]],
+  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 1"]]["Mean",] ^ 2)
 )
 
-ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec)) -
+ess["MoPP 1"] <- exp(2 * log(sum(mopp.out$Hvec)) -
   lrowsums(
     unlist(
       mapply(
         FUN = function(w, h) {2 * w + 2 * log(h)},
-        remix.out$wn.type_1,
-        remix.out$Hvec,
+        mopp.out$wn.type_1,
+        mopp.out$Hvec,
         SIMPLIFY = FALSE
       )
     )
@@ -329,21 +329,21 @@ ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec)) -
 )
 ```
 
-Remix algorithm 2.
+MoPP algorithm 2.
 
 ```{r}
-posterior.estimates[["Remix 2"]] <- rbind(
-  "Mean" = remix.mean(samples.part, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec),
-  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
-  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
-  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",]
+posterior.estimates[["MoPP 2"]] <- rbind(
+  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec),
+  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
+  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
+  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",]
 )
-posterior.estimates[["Remix 2"]] <- rbind(
-  posterior.estimates[["Remix 2"]],
-  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]]["Mean",] ^ 2)
+posterior.estimates[["MoPP 2"]] <- rbind(
+  posterior.estimates[["MoPP 2"]],
+  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 2"]]["Mean",] ^ 2)
 )
 
-ess["Remix 2"] <- exp(-lrowsums(2 * unlist(remix.out$wn.type_2)))
+ess["MoPP 2"] <- exp(-lrowsums(2 * unlist(mopp.out$wn.type_2)))
 ```
 
 Consensus Monte Carlo.
@@ -433,7 +433,7 @@ and so on). Samples of each element are stored in a matrix with one column for
 each element.
 
 OPTION:
-It will make likelihood evaluations for the remix algorithm easier if we store 
+It will make likelihood evaluations for the MoPP algorithm easier if we store 
 samples of the symmetric square root of the precision matrix as well as the 
 covariance matrix.
 
@@ -550,7 +550,7 @@ samples.part.frac <- lapply(samples.part.frac, FUN = as.matrix)
 
 ### Pooling algorithms
 
-Here we define the log likelihood function, to be used by remix. This is 
+Here we define the log likelihood function, to be used by MoPP. This is 
 specific to the model with $\Sigma$ unknown.
 
 ```{r}
@@ -572,11 +572,11 @@ loglik.fun <- function(theta, x, d) {
 }
 ```
 
-Remix.
+MoPP.
 
 ```{r}
 timer <- proc.time()
-remix.out <- remix.weights(
+mopp.out <- mopp.weights(
   x.cluster,
   samples.part,
   loglik.fun = loglik.fun,
@@ -635,7 +635,7 @@ dimension.
 
 ```{r}
 posterior.estimates <- list()
-ess <- sapply(c("Vanilla", "Naive", "Remix 1", "Remix 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
+ess <- sapply(c("Vanilla", "Naive", "MoPP 1", "MoPP 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
 ```
 
 Full posterior sampling.
@@ -678,27 +678,27 @@ posterior.estimates[["Naive"]] <- apply(
 ess["Naive"] <- mcmcse::multiESS(abind::abind(samples.part, along = 1))
 ```
 
-Remix algorithm 1.
+MoPP algorithm 1.
 
 ```{r}
-posterior.estimates[["Remix 1"]] <- rbind(
-  "Mean" = remix.mean(samples.part, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec),
-  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
-  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",],
-  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec)["root",]
+posterior.estimates[["MoPP 1"]] <- rbind(
+  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec),
+  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
+  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
+  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",]
 )
-posterior.estimates[["Remix 1"]] <- rbind(
-  posterior.estimates[["Remix 1"]],
-  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_1, type = 1, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 1"]]["Mean",] ^ 2)
+posterior.estimates[["MoPP 1"]] <- rbind(
+  posterior.estimates[["MoPP 1"]],
+  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 1"]]["Mean",] ^ 2)
 )
 
-ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec)) -
+ess["MoPP 1"] <- exp(2 * log(sum(mopp.out$Hvec)) -
   lrowsums(
     unlist(
       mapply(
         FUN = function(w, h) {2 * w + 2 * log(h)},
-        remix.out$wn.type_1,
-        remix.out$Hvec,
+        mopp.out$wn.type_1,
+        mopp.out$Hvec,
         SIMPLIFY = FALSE
       )
     )
@@ -706,21 +706,21 @@ ess["Remix 1"] <- exp(2 * log(sum(remix.out$Hvec)) -
 )
 ```
 
-Remix algorithm 2.
+MoPP algorithm 2.
 
 ```{r}
-posterior.estimates[["Remix 2"]] <- rbind(
-  "Mean" = remix.mean(samples.part, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec),
-  "Median" = remix.quantile(samples.part, 0.5, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
-  "2.5%" = remix.quantile(samples.part, 0.025, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",],
-  "97.5%" = remix.quantile(samples.part, 0.975, remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec)["root",]
+posterior.estimates[["MoPP 2"]] <- rbind(
+  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec),
+  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
+  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
+  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",]
 )
-posterior.estimates[["Remix 2"]] <- rbind(
-  posterior.estimates[["Remix 2"]],
-  "Std. Dev" = sqrt(remix.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), remix.out$wn.type_2, type = 2, Hvec = remix.out$Hvec) - posterior.estimates[["Remix 2"]]["Mean",] ^ 2)
+posterior.estimates[["MoPP 2"]] <- rbind(
+  posterior.estimates[["MoPP 2"]],
+  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 2"]]["Mean",] ^ 2)
 )
 
-ess["Remix 2"] <- exp(-lrowsums(2 * unlist(remix.out$wn.type_2)))
+ess["MoPP 2"] <- exp(-lrowsums(2 * unlist(mopp.out$wn.type_2)))
 ```
 
 Consensus Monte Carlo.

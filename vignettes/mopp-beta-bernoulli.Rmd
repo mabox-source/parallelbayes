@@ -23,7 +23,7 @@ The beta-Bernoulli model is
 
 This is an example used in Scott et al 2016. Binary data is simulated and we 
 infer the rate parameter of a Bernoulli model, specifying a beta distribution 
-pior.
+prior.
 
 The posterior distribution in Scott et al 2016's example is positively skewed, 
 and so non-normal, presenting a particular challenge for the Consensus 
@@ -41,7 +41,7 @@ single success and 999 failures. These are partitioned into 100 data shards.
 
 This is an interesting test for distributed computation because the success 
 outcome will only be observed in one shard. The question is how well are we 
-able to reproduce the infereces we would have made if all 1,000 observations 
+able to reproduce the inferences we would have made if all 1,000 observations 
 had been accessible to our posterior sampling routine.
 
 ```{r}

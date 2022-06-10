@@ -22,7 +22,7 @@
 #' matrix is difficult to compute, in which case the covariances are ignored, 
 #' as suggested by Scott et al 2016.
 #'
-#' @section References
+#' @section References:
 #' \itemize{
 #' \item{Scott, Steven L., Blocker, A.W., Bonassi, F.V., Chipman, H.A., George, E.I. and McCulloch, R.E., 2016. Bayes and big data: The consensus Monte Carlo algorithm. \emph{International Journal of Management Science and Engineering Management}, 11(2), pp.78-88.}
 #' }
@@ -49,11 +49,14 @@
 #' number of the covariance matrix. If less than this, the covariances are 
 #' ignored. See details.
 #'
-#' @return A list with elements: \code{w}, list of weighting matrices used; 
-#' diagnostics \code{cov_used.partial} and \code{cov_used.pooled} (see 
-#' details); a matrix \code{theta.w.pooled} of pooled, weighted samples if 
-#' \code{return.pooled} is \code{TRUE}. If Spark is used, also field 
-#' \code{theta.w}, a Spark table similar to \code{theta} of weighted samples.
+#' @return  A list containing fields:
+#' \item{w}{A list of weighting matrices used.}
+#' \item{cov_used.partial}{Diagnostics (see Details).}
+#' \item{cov_used.pooled}{Diagnostics (see Details).}
+#' \item{theta.w.pooled}{A matrix of pooled, weighted samples if 
+#' \code{return.pooled} is \code{TRUE}.}
+#' \item{theta.w}{A Spark table similar to \code{theta} of weighted samples 
+#' (if Spark is used).}
 #' 
 #' @export
 consensus.weights <- function(
@@ -190,7 +193,7 @@ consensus.weights <- function(
 #' the covariance matrix. If less than this, the covariances are ignored.}
 #' }
 #'
-#' @section References
+#' @section References:
 #' \itemize{
 #' \item{Scott, Steven L., Blocker, A.W., Bonassi, F.V., Chipman, H.A., George, E.I. and McCulloch, R.E., 2016. Bayes and big data: The consensus Monte Carlo algorithm. \emph{International Journal of Management Science and Engineering Management}, 11(2), pp.78-88.}
 #' }

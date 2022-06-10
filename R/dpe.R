@@ -15,7 +15,7 @@
 #' matrix is difficult to compute, in which case the covariances are ignored, 
 #' as suggested by Scott et al 2016.
 #'
-#' @section References
+#' @section References:
 #' \itemize{
 #' \item{Neiswanger, W., Wang, C. and Xing, E., 2013. Asymptotically exact, embarrassingly parallel MCMC. \emph{arXiv preprint arXiv: 1311.4780.}}
 #' \item{Scott, Steven L., Blocker, A.W., Bonassi, F.V., Chipman, H.A., George, E.I. and McCulloch, R.E., 2016. Bayes and big data: The consensus Monte Carlo algorithm. \emph{International Journal of Management Science and Engineering Management}, 11(2), pp.78-88.}
@@ -41,7 +41,16 @@
 #' number of the covariance matrix. If less than this, the covariances are 
 #' ignored. See details.
 #'
-#' @return
+#' @return  A list containing fields:
+#' \item{theta.pooled}{A matrix of pooled samples approximating the posterior 
+#' distribution.}
+#' \item{acceptance_rates}{Either a list of matrices, if \code{recursive} is 
+#' \code{TRUE}, or a single matrix of Metropolis acceptance rates. One row for 
+#' each partition of the data parts into subsets and one column for each 
+#' \code{subset.size}. If a list, one element for each recursive step.}
+#' \item{cov_used.partial}{Diagnostics (see Details).}
+#' \item{cov_used.pooled}{Diagnostics (see Details).}
+#'
 #' @export
 dpe.master <- function(
   theta,

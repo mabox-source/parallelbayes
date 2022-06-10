@@ -37,7 +37,7 @@
 #' distributions using proper priors rather than the "fractionated" priors of 
 #' the consensus Monte Carlo algorithm of Scott et al 2016.
 #'
-#' @section References
+#' @section References:
 #' \itemize{
 #' \item{Scott, Steven L., Blocker, A.W., Bonassi, F.V., Chipman, H.A., George, E.I. and McCulloch, R.E., 2016. Bayes and big data: The consensus Monte Carlo algorithm. \emph{International Journal of Management Science and Engineering Management}, 11(2), pp.78-88.}
 #' }
@@ -77,13 +77,15 @@
 #' function. See details on \code{loglik.fun}.
 #'
 #' @return A list containing fields:
-#' \item{Hvec}{a vector of the number of samples from each partial 
+#' \item{Hvec}{A vector of the number of samples from each partial 
 #' posterior.}
-#' \item{wn.type_1 or wn.type_2}{the normalised weighted of type 1 or type 2, 
+#' \item{wn.type_1 or wn.type_2}{The normalised weighted of type 1 or type 2, 
 #' depending on the value of \code{type}.}
-#' \item{wn.type_1}{additionally returned if \code{keep.type1} is \code{TRUE}.}
-#' \item{w.type_1 and/or w.type_2}{the corresponding unnormalised weights, if 
-#' \code{keep.unnormalised} is \code{TRUE}
+#' \item{wn.type_1}{Additionally returned if \code{keep.type1} is \code{TRUE}.}
+#' \item{w.type_1}{The corresponding unnormalised weights, if 
+#' \code{keep.unnormalised} is \code{TRUE}}
+#' \item{w.type_2}{The corresponding unnormalised weights, if 
+#' \code{keep.unnormalised} is \code{TRUE}}
 #' \item{loglik}{log likelihoods, returned if \code{return.loglik} is 
 #' \code{TRUE}}
 #' Weights and log likelihoods are returned as lists of matrices with 1 column 
@@ -729,7 +731,7 @@ mopp.quantile <- function(
 
 #' Smooth the MoPP weights using the generalised Pareto distribution
 #'
-#' @section References
+#' @section References:
 #' \itemize{
 #' \item{Vehtari, A., Simpson, D., Gelman, A. Yao, Y. and Gabry, J., 2015. Pareto smoothed importance sampling. \emph{arXiv preprint arXiv: 1507.02646.}}
 #' \item{Vehtari, A., Gelman, A. and Gabry, J., 2017. Practical Bayesian model evaluation using leave-one-out cross-validation and WAIC. \emph{Statistics and computing}, 27(5), pp.1413-1432.}

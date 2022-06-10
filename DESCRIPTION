@@ -22,3 +22,4 @@ Suggests:
     loo,
     BayesLogit,
     ggplot2
+RoxygenNote: 7.2.0

@@ -161,7 +161,7 @@ partition <- function(x,
 #' coefficients.}
 #' }
 #'
-#' @section References
+#' @section References:
 #' \itemize{
 #' \item{Polson, N.G., Scott, J.G. and Windle, J., 2013. Bayesian inference for logistic model using P\out{&oacture;}lya-Gamma latent variables. \emph{Journal of the American statistical Association, 108} \bold{(504)}, pp.1339-1349.}
 #' }

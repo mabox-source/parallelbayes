@@ -1,0 +1,803 @@
+---
+title: "MoPP Examples with Normal Data"
+author: "Marc Box"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+bibliography: "references.bib"
+vignette: >
+  %\VignetteIndexEntry{MoPP Examples with Normal Data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# MoPP Examples with Normal Data
+
+There are two models to consider: one where data are uncorrelated (the 
+off-diagonal elements of the covariance matrix are zero) and one where the data 
+are correlated. In either case we can assume the covariance matrix is known, or 
+we can leave it as unknown and posit a prior distribution for it, as well as 
+for the mean.
+
+In this vignette we look at the uncorrelated data case, performing inference 
+with $\Sigma$ known and unknown.
+
+We will use:
+
+* 2 dimensions
+* 200 observations
+* Mean $(5, -5)$
+* Variances $2.3, 1.7$
+
+This is a very simple example, designed merely to demonstrate functionality 
+and the algorithms.
+
+```{r}
+d <- 2
+mu <- c(5, -5)
+Sigma <- diag(c(2.3, 1.7))
+n <- 200
+
+# YYMMDDhhmm
+#set.seed(1907281047)
+set.seed(1909220951)
+
+x <- MASS::mvrnorm(n, mu, Sigma)
+```
+
+Randomly partition the data into $M = 4$ parts.
+
+```{r}
+M <- 4
+x.list <- partition(x, M, random = TRUE, balanced = TRUE)
+print(sapply(x.list, nrow))
+```
+
+Connect to Spark cluster (localhost) and distribute the parts.
+
+```{r}
+library(sparklyr)
+
+config <- spark_config()
+config$spark.executor.memory <- "1125m"
+config$spark.executor.cores <- 1
+config$spark.executor.instances <- 2
+config$spark.dynamicAllocation.enabled <- FALSE
+
+config$`sparklyr.cores.local` <- 8
+config$`sparklyr.shell.driver-memory` <- "8G"
+config$spark.dynamicAllocation.enabled <- "false"
+config$spark.executor.instances <- M
+
+sc <- spark_connect(
+  master = "local",
+  config = config,
+  version = "2.4.8"
+)
+
+invoke(spark_context(sc), "getExecutorMemoryStatus")
+
+x.cluster.parts <- list()
+for (p in 1:M) x.cluster.parts[[p]] <- sdf_copy_to(sc, as.data.frame(cbind(p, x.list[[p]])), repartition = 1, overwrite = TRUE)
+# This creates a Spark table with M "partitions" (i.e. distributed parts).
+x.cluster <- do.call(sdf_bind_rows, x.cluster.parts)
+
+# Check a few things.
+spark_apply(x.cluster, function(p) nrow(p), names = "n")
+spark_apply(x.cluster, function(p) tail(p, 2))
+
+# Check number of partitions.
+sdf_num_partitions(x.cluster)
+```
+
+## Inference with $\Sigma$ known
+
+### Sample from full posterior
+
+Simulate from the full posterior, in local memory.
+
+```{r eval = FALSE}
+H <- 10000
+
+samples.full <- matrix(NA, H, d)
+
+x.bar <- colMeans(x)
+
+set.seed(1909220937)
+for (h in 1:H) {
+  samples.full[h,1:d] <- MASS::mvrnorm(1, x.bar, 1 / n * Sigma)
+}
+```
+
+### Distributed sampling from partial posteriors
+
+In the sampling performed in this section, we assume a Jeffreys prior for 
+$\mu$. Note this is not the same as the prior on p88 of Gelman et al, which is 
+the "independence-Jeffreys" prior.
+
+Define the function to distribute. The fractionated prior is the same as the 
+proper prior, so this can be used for all pooling algorithms.
+
+```{r}
+f <- function(df, context) {
+  samples.part <- matrix(NA, context$H, 1 + context$d) # The extra column is for the partition label.
+  # Add the partition label.
+  part <- df[1,1]
+  samples.part[,1] <- part
+
+  set.seed(context$seeds[part])
+
+  n <- nrow(df)
+  x.bar <- colMeans(df[,-1,drop = FALSE])
+
+  for (h in 1:context$H) {
+    samples.part[h,1 + 1:context$d] <- MASS::mvrnorm(1, x.bar, 1 / n * context$Sigma)
+  }
+
+  samples.part
+}
+```
+
+Now run.
+
+```{r}
+# Set master seed.
+set.seed(1909220948)
+# Seeds for each executor.
+# Default RNG algorithm (Mersenne-Twister) uses 32 bit integers.
+seeds <- sample.int(2^32 - 1, M) - 2^32 / 2
+
+# Context object sent to executors.
+ctx <- list(
+  d = d,
+  H = H,
+  Sigma = Sigma,
+  seeds = seeds
+)
+
+res.cluster <- spark_apply(x.cluster, f, context = ctx)
+
+# Import results to local memory and convert to a list.
+res <- as.data.frame(res.cluster)
+samples.part <- split(res[,-1], res[,1])
+samples.part <- lapply(samples.part, FUN = as.matrix)
+```
+
+
+### Pooling algorithms
+
+Here we define the log likelihood function, to be used by MoPP. This is 
+specific to the model with $\Sigma$ known.
+
+```{r}
+loglik.fun <- function(theta, x, Sigma, d) {
+  H <- nrow(theta)
+  ll <- matrix(NA, H, 1)
+  for (h in 1:H) {
+    ll[h] <- sum(mvtnorm::dmvnorm(x, theta[h,1:d], Sigma, log = TRUE))
+  }
+  ll
+}
+```
+
+MoPP.
+
+```{r}
+timer <- proc.time()
+mopp.out <- mopp.weights(
+  x.cluster,
+  samples.part,
+  loglik.fun = loglik.fun,
+  type = 2,
+  keep.type1 = TRUE,
+  Sigma = Sigma,
+  d = d
+)
+print(proc.time() - timer)
+```
+
+Consensus Monte Carlo algorithm.
+
+```{r}
+timer <- proc.time()
+consensus1.out <- consensus.weights(
+  samples.part,
+  type = 1,
+  return.pooled = TRUE
+)
+print(proc.time() - timer)
+
+timer <- proc.time()
+consensus2.out <- consensus.weights(
+  samples.part,
+  type = 2,
+  return.pooled = TRUE
+)
+print(proc.time() - timer)
+```
+
+Density product estimators.
+
+```{r}
+timer <- proc.time()
+ndpe.out <- dpe.master(
+  samples.part,
+  type = "ndpe",
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+
+timer <- proc.time()
+sdpe.out <- dpe.master(
+  samples.part,
+  type = "sdpe",
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+```
+
+
+### Posterior parameter estimates
+
+Here we compute the pooling algorithm estimates of the posterior mean, median, 
+2.5% quantile, 97.5% quantile and standard deviation of each model parameter 
+dimension.
+
+We also estimate the effective sample size (ESS). "Roughly speaking, the ESS of 
+a quantity of interest captures how many independent draws contain the same 
+amount of information as the dependent sample obtained by the MCMC algorithm" 
+(Vehtari et al 2019). The maximum possible for the consensus and DPE algorithms 
+is $\frac{H^{total}}{M}$; for the other methods, including MoPP, the maximum 
+possible is $H$.
+
+```{r}
+posterior.estimates <- list()
+ess <- sapply(c("Vanilla", "Naive", "MoPP 1", "MoPP 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
+```
+
+Full posterior sampling.
+
+```{r}
+posterior.estimates[["Vanilla"]] <- apply(
+  samples.full,
+  2,
+  FUN = function(theta) {
+    c(
+      "Mean" = mean(theta),
+      "Median" = median(theta),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
+      "Std. dev." = sd(theta)
+    )
+  }
+)
+
+ess["Vanilla"] <- mcmcse::multiESS(samples.full)
+```
+
+Naive pooling of partial posterior samples.
+
+```{r}
+posterior.estimates[["Naive"]] <- apply(
+  abind::abind(samples.part, along = 1),
+  2,
+  FUN = function(theta) {
+    c(
+      "Mean" = mean(theta),
+      "Median" = median(theta),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
+      "Std. dev." = sd(theta)
+    )
+  }
+)
+
+ess["Naive"] <- mcmcse::multiESS(abind::abind(samples.part, along = 1))
+```
+
+MoPP algorithm 1.
+
+```{r}
+posterior.estimates[["MoPP 1"]] <- rbind(
+  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec),
+  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
+  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
+  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",]
+)
+posterior.estimates[["MoPP 1"]] <- rbind(
+  posterior.estimates[["MoPP 1"]],
+  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 1"]]["Mean",] ^ 2)
+)
+
+ess["MoPP 1"] <- exp(2 * log(sum(mopp.out$Hvec)) -
+  lrowsums(
+    unlist(
+      mapply(
+        FUN = function(w, h) {2 * w + 2 * log(h)},
+        mopp.out$wn.type_1,
+        mopp.out$Hvec,
+        SIMPLIFY = FALSE
+      )
+    )
+  )
+)
+```
+
+MoPP algorithm 2.
+
+```{r}
+posterior.estimates[["MoPP 2"]] <- rbind(
+  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec),
+  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
+  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
+  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",]
+)
+posterior.estimates[["MoPP 2"]] <- rbind(
+  posterior.estimates[["MoPP 2"]],
+  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 2"]]["Mean",] ^ 2)
+)
+
+ess["MoPP 2"] <- exp(-lrowsums(2 * unlist(mopp.out$wn.type_2)))
+```
+
+Consensus Monte Carlo.
+
+```{r}
+posterior.estimates[["Consensus 1"]] <- apply(
+  consensus1.out$theta.w.pooled,
+  2,
+  FUN = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+ess["Consensus 1"] <- mcmcse::multiESS(consensus1.out$theta.w.pooled)
+
+posterior.estimates[["Consensus 2"]] <- apply(
+  consensus2.out$theta.w.pooled,
+  2,
+  FUN = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+ess["Consensus 2"] <- mcmcse::multiESS(consensus2.out$theta.w.pooled)
+```
+
+Density product estimators.
+
+```{r}
+posterior.estimates[["NDPE"]] <- apply(
+  ndpe.out$theta.pooled,
+  2,
+  FUN = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+ess["NDPE"] <- mcmcse::multiESS(ndpe.out$theta.pooled)
+
+posterior.estimates[["SDPE"]] <- apply(
+  sdpe.out$theta.pooled,
+  2,
+  FUN = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+ess["SDPE"] <- mcmcse::multiESS(sdpe.out$theta.pooled)
+```
+
+
+## Inference with $\Sigma$ unknown
+
+Now let's try including $\Sigma$ in sampling.
+
+### Computational notes
+
+There is no need to store every element of the covariance matrix: the upper and 
+lower triangles are identical, so we just store one of them. Our convention is 
+that we store the lower triangle, including the diagonal, and elements are 
+taken in columnwise order (column 1 first, from the first row, then column 2, 
+and so on). Samples of each element are stored in a matrix with one column for 
+each element.
+
+OPTION:
+It will make likelihood evaluations for the MoPP algorithm easier if we store 
+samples of the symmetric square root of the precision matrix as well as the 
+covariance matrix.
+
+### Sample from full posterior
+
+```{r eval = FALSE}
+H <- 10000
+
+# d elements for mean vector, d(d+1)/2 for lower triangle of covariance matrix.
+samples.full <- matrix(NA, H, d + d * (d + 1) / 2)
+
+x.bar <- colMeans(x)
+S <- crossprod(sweep(x, MARGIN = 2, STATS = x.bar, FUN = "-"))
+lower_triangle <- lower.tri(S, diag = TRUE)
+
+set.seed(1902241209)
+for (h in 1:H) {
+  Sigma.sample <- MCMCpack::riwish(n, S)
+  samples.full[h,(d + 1):ncol(samples.full)] <- Sigma.sample[lower_triangle]
+  samples.full[h,1:d] <- MASS::mvrnorm(1, x.bar, 1 / n * Sigma.sample)
+}
+```
+
+### Distributed sampling from partial posteriors
+
+Function to distribute. In the supplied context the fractionated prior can be 
+requested using field `prior`.
+
+```{r}
+f <- function(df, context) {
+  # d elements for mean vector, d(d+1)/2 for lower triangle of covariance matrix.
+  samples.part <- matrix(NA, context$H, 1 + context$d + context$d * (context$d + 1) / 2) # The extra column is for the partition label.
+  # Add the partition label.
+  part <- df[1,1]
+  samples.part[,1] <- part
+
+  set.seed(context$seeds[part])
+
+  use_fractionated_prior <- charmatch(tolower(context$prior), c("proper", "fractionated")) == 2
+
+  n <- nrow(df)
+  x.bar <- colMeans(df[,-1,drop = FALSE])
+  S <- crossprod(sweep(df[,-1,drop = FALSE], MARGIN = 2, STATS = x.bar, FUN = "-"))
+  lower_triangle <- lower.tri(S, diag = TRUE)
+
+  for (h in 1:context$H) {
+    if (use_fractionated_prior) {
+      Sigma.sample <- MCMCpack::riwish((context$d + 2) / context$M + n - context$d - 1, S)
+    } else {
+      Sigma.sample <- MCMCpack::riwish(n, S)
+    }
+    samples.full[h,1 + (d + 1):ncol(samples.full)] <- Sigma.sample[lower_triangle]
+    samples.part[h,1 + 1:contextd] <- MASS::mvrnorm(1, x.bar, 1 / n * context$Sigma)
+  }
+
+  samples.part
+}
+```
+
+Run using proper priors for $(\mu, \Sigma)$:
+
+```{r}
+# Set master seed.
+set.seed(1907281047)
+# Seeds for each executor.
+# Default RNG algorithm (Mersenne-Twister) uses 32 bit integers.
+seeds <- sample.int(2^32 - 1, M) - 2^32 / 2
+
+# Context object sent to executors.
+ctx <- list(
+  M = M,
+  d = d,
+  H = H,
+  Sigma = Sigma,
+  seeds = seeds,
+  prior = "proper"
+)
+res.cluster <- spark_apply(x.cluster, f, context = ctx)
+
+# Import results to local memory and convert to a list.
+res <- as.data.frame(res.cluster)
+samples.part <- split(res[,-1], res[,1])
+samples.part <- lapply(samples.part, FUN = as.matrix)
+```
+
+Now run using "fractionated" priors.
+
+```{r}
+# Set master seed.
+set.seed(2205171739)
+# Seeds for each executor.
+# Default RNG algorithm (Mersenne-Twister) uses 32 bit integers.
+seeds <- sample.int(2^32 - 1, M) - 2^32 / 2
+
+# Context object sent to executors.
+ctx <- list(
+  M = M,
+  d = d,
+  H = H,
+  Sigma = Sigma,
+  seeds = seeds,
+  prior = "fractionated"
+)
+res.cluster <- spark_apply(x.cluster, f, context = ctx)
+
+# Import results to local memory and convert to a list.
+res <- as.data.frame(res.cluster)
+samples.part.frac <- split(res[,-1], res[,1])
+samples.part.frac <- lapply(samples.part.frac, FUN = as.matrix)
+```
+
+[Here is a great time to make a plot of samples.]
+
+
+### Pooling algorithms
+
+Here we define the log likelihood function, to be used by MoPP. This is 
+specific to the model with $\Sigma$ unknown.
+
+```{r}
+loglik.fun <- function(theta, x, d) {
+  H <- nrow(theta)
+  ll <- matrix(NA, H, 1)
+  v <- array(NA, dim = c(H, d, d))
+  # Indices for lower triangle, including diagonal.
+  cov.inds <- which(lower.tri(diag(d), diag = TRUE), arr.ind = TRUE)
+  v[c(outer(1:H, (cov.inds[,1] - 1) * H + (cov.inds[,2] - 1) * H * d, FUN = "+"))] <- theta[,(d + 1):ncol(theta)]
+  # Now copy the lower triangle to the upper triangle.
+  upper_triangle <- which(upper.tri(diag(d), diag = FALSE), arr.ind = TRUE)
+  lower_triangle <- which(lower.tri(diag(d), diag = FALSE), arr.ind = TRUE)
+  v[,upper_triangle[,1],upper_triangle[,2]] <- v[,lower_triangle[,1],lower_triangle[,2]]
+  for (h in 1:H) {
+    ll[h] <- sum(mvtnorm::dmvnorm(x, theta[h,1:d], v[i,,], log = TRUE))
+  }
+  ll
+}
+```
+
+MoPP.
+
+```{r}
+timer <- proc.time()
+mopp.out <- mopp.weights(
+  x.cluster,
+  samples.part,
+  loglik.fun = loglik.fun,
+  type = 2,
+  keep.type1 = TRUE,
+  d = d
+)
+print(proc.time() - timer)
+```
+
+Consensus Monte Carlo algorithm.
+
+```{r}
+timer <- proc.time()
+consensus1.out <- consensus.weights(
+  samples.part.frac,
+  type = 1,
+  return.pooled = TRUE
+)
+print(proc.time() - timer)
+
+timer <- proc.time()
+consensus2.out <- consensus.weights(
+  samples.part.frac,
+  type = 2,
+  return.pooled = TRUE
+)
+print(proc.time() - timer)
+```
+
+Density product estimators.
+
+```{r}
+timer <- proc.time()
+ndpe.out <- dpe.master(
+  samples.part.frac,
+  type = "ndpe",
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+
+timer <- proc.time()
+sdpe.out <- dpe.master(
+  samples.part.frac,
+  type = "sdpe",
+  keep.type1 = TRUE
+)
+print(proc.time() - timer)
+```
+
+### Posterior parameter estimates
+
+Here we compute the pooling algorithm estimates of the posterior mean, median, 
+2.5% quantile, 97.5% quantile and standard deviation of each model parameter 
+dimension.
+
+```{r}
+posterior.estimates <- list()
+ess <- sapply(c("Vanilla", "Naive", "MoPP 1", "MoPP 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
+```
+
+Full posterior sampling.
+
+```{r}
+posterior.estimates[["Vanilla"]] <- apply(
+  samples.full,
+  2,
+  FUN = function(theta) {
+    c(
+      "Mean" = mean(theta),
+      "Median" = median(theta),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
+      "Std. dev." = sd(theta)
+    )
+  }
+)
+
+ess["Vanilla"] <- mcmcse::multiESS(samples.full)
+```
+
+Naive pooling of partial posterior samples.
+
+```{r}
+posterior.estimates[["Naive"]] <- apply(
+  abind::abind(samples.part, along = 1),
+  2,
+  FUN = function(theta) {
+    c(
+      "Mean" = mean(theta),
+      "Median" = median(theta),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
+      "Std. dev." = sd(theta)
+    )
+  }
+)
+
+ess["Naive"] <- mcmcse::multiESS(abind::abind(samples.part, along = 1))
+```
+
+MoPP algorithm 1.
+
+```{r}
+posterior.estimates[["MoPP 1"]] <- rbind(
+  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec),
+  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
+  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
+  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",]
+)
+posterior.estimates[["MoPP 1"]] <- rbind(
+  posterior.estimates[["MoPP 1"]],
+  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 1"]]["Mean",] ^ 2)
+)
+
+ess["MoPP 1"] <- exp(2 * log(sum(mopp.out$Hvec)) -
+  lrowsums(
+    unlist(
+      mapply(
+        FUN = function(w, h) {2 * w + 2 * log(h)},
+        mopp.out$wn.type_1,
+        mopp.out$Hvec,
+        SIMPLIFY = FALSE
+      )
+    )
+  )
+)
+```
+
+MoPP algorithm 2.
+
+```{r}
+posterior.estimates[["MoPP 2"]] <- rbind(
+  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec),
+  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
+  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
+  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",]
+)
+posterior.estimates[["MoPP 2"]] <- rbind(
+  posterior.estimates[["MoPP 2"]],
+  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 2"]]["Mean",] ^ 2)
+)
+
+ess["MoPP 2"] <- exp(-lrowsums(2 * unlist(mopp.out$wn.type_2)))
+```
+
+Consensus Monte Carlo.
+
+```{r}
+posterior.estimates[["Consensus 1"]] <- apply(
+  consensus1.out$theta.w.pooled,
+  2,
+  FUN = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+ess["Consensus 1"] <- mcmcse::multiESS(consensus1.out$theta.w.pooled)
+
+posterior.estimates[["Consensus 2"]] <- apply(
+  consensus2.out$theta.w.pooled,
+  2,
+  FUN = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+ess["Consensus 2"] <- mcmcse::multiESS(consensus2.out$theta.w.pooled)
+```
+
+Density product estimators.
+
+```{r}
+posterior.estimates[["NDPE"]] <- apply(
+  ndpe.out$theta.pooled,
+  2,
+  FUN = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+ess["NDPE"] <- mcmcse::multiESS(ndpe.out$theta.pooled)
+
+posterior.estimates[["SDPE"]] <- apply(
+  sdpe.out$theta.pooled,
+  2,
+  FUN = function(theta) {
+    c(
+      "mean" = mean(theta),
+      "median" = median(theta),
+      quantile(theta, 0.025),
+      quantile(theta, 0.975),
+      "std. dev." = sd(theta)
+    )
+  }
+)
+
+ess["SDPE"] <- mcmcse::multiESS(sdpe.out$theta.pooled)
+```
+
+Close cluster.
+
+```{r}
+spark_disconnect(sc)
+```
+

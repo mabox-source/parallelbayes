@@ -97,7 +97,7 @@ mopp.weights <- function(
   x,
   theta,
   loglik = NULL,
-  loglik.fun,
+  loglik.fun = NULL,
   type = 2,
   w.type_1 = NULL,
   keep.type1 = TRUE,
@@ -113,6 +113,7 @@ mopp.weights <- function(
   #  Setup.
   
   if (!("list" %in% class(theta))) stop("theta must be a list!")
+  if (is.null(loglik) && is.null(loglik.fun)) stop("One of loglik or loglik.fun must be supplied!")
   if (!(type %in% 1:2)) stop("type must be 1 or 2!")
   if (class(x)[1] == "tbl_spark") {
     if (!require(sparklyr)) stop("sparklyr is required!")

@@ -207,7 +207,7 @@ mopp.weights <- function(
   }
   # List of vectors.
   if (verbose) message("Computing type 1 weights' normalising constants...")
-  if (params$use_parallel) {
+  if (par$valid) {
     w.sum_type_1 <- parallel::parLapply(par$par.clust, w.type_1, fun = function(ww) {lrowsums(ww, 1)})
   } else {
     w.sum_type_1 <- lapply(w.type_1, FUN = function(ww) {lrowsums(ww, 1)})
@@ -255,6 +255,7 @@ mopp.weights <- function(
     if (verbose) message("Done.")
     if (verbose) message("Normalising type 2 weights...")
     wn.type_2 <- sweep(w.type_2, STATS = w.sum_type_2, MARGIN = 2, FUN = "-", check.margin = FALSE)
+    if (verbose) message("Done.")
     # Split only preserves dimensions on data.frames, so convert to df first.
     w.type_2 <- split(as.data.frame(w.type_2), params$pp.inds)
     w.type_2 <- lapply(w.type_2, as.matrix)
@@ -264,7 +265,6 @@ mopp.weights <- function(
     wn.type_2 <- lapply(wn.type_2, as.matrix)
     wn.type_2 <- lapply(wn.type_2, FUN = function(ww){dimnames(ww) <- NULL; ww})
     names(wn.type_2) <- NULL 
-    if (verbose) message("Done.")
   }
   
   ############################################################################
@@ -726,6 +726,54 @@ mopp.quantile <- function(
   }
   
   return(q.hat)
+}
+
+
+mopp.normalise <- function(
+  w,
+  type,
+  par,
+  verbose
+) {
+  if (type == 1) {
+    if (verbose) message("Computing type 1 weights' normalising constants...")
+    if (par$valid) {
+      w.sum <- parallel::parLapply(par$par.clust, w, fun = function(ww) {lrowsums(ww, 1)})
+    } else {
+      w.sum <- lapply(w, FUN = function(ww) {lrowsums(ww, 1)})
+    }
+    if (verbose) message("Done.")
+    # Normalise weights and convert to a list with the same structure as theta.
+    if (verbose) message("Normalising type 1 weights...")
+    for (i in 1:n_shards) {
+      if (any(!is.finite(w.sum_type_1[[i]]))) message(paste0("Sum of type 1 weights for shard ", i, " is zero. NaN returned for normalised weights."))
+    }
+    if (par$valid) {
+      wn <- parallel::clusterMap(
+          par.clust,
+          fun = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)},
+          w,
+          w.sum,
+          SIMPLIFY = FALSE
+        )
+    } else {
+      wn <- mapply(FUN = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)}, w, w.sum, SIMPLIFY = FALSE)
+    }
+
+    if (verbose) message("Done.")
+
+  } else {
+    # Normalisation for type 2 is relative to whole sample.
+    if (verbose) message("Computing type 2 normalising constants...")
+    w.sum <- lrowsums(w, 1)
+    if (any(!is.finite(w.sum))) message("Sum of type 2 weights is zero. NaN returned for normalised weights.")
+    if (verbose) message("Done.")
+    if (verbose) message("Normalising type 2 weights...")
+    wn <- sweep(w, STATS = w.sum, MARGIN = 2, FUN = "-", check.margin = FALSE)
+    if (verbose) message("Done.")
+  }
+
+  return(list(wn, w.sum))
 }
 
 

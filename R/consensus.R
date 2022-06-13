@@ -40,6 +40,12 @@
 #' returned. If Spark is used, this means returned to local memory (the calling 
 #' environment) - in either case, weighted samples will be returned in a Spark 
 #' table.
+#' @param correct.bias Logical. If \code{TRUE}, the small sample bias 
+#' correction is applied to the pooled samples. Has no effect if 
+#' \code{return.pooled} is \code{FALSE}.
+#' @param alpha numeric between 0 and 1: the proportion of samples to use in 
+#' the bias estimation. Default is 0.2; ignored if \code{correct.bias} is 
+#' \code{FALSE}.
 #' @param par.clust an optional cluster connection object from package 
 #' \code{parallel}. Ignored if \code{theta} is a Spark table.
 #' @param ncores an optional integer specifying the number of CPU cores to use 
@@ -63,6 +69,8 @@ consensus.weights <- function(
   theta,
   type = 2,
   return.pooled = FALSE,
+  correct.bias = FALSE,
+  alpha = 0.2,
   par.clust = NULL,
   ncores = 1,
   cov.tol = .Machine$double.eps
@@ -161,6 +169,20 @@ consensus.weights <- function(
       ), dims = 2) %*% w.pooled
     }
     dimnames(theta.w.pooled) <- NULL
+
+    # Apply small sample bias correction?
+    if (correct.bias) {
+      theta.w.pooled <- consensus.bias_correction(
+        alpha = alpha,
+        theta.w.pooled = theta.w.pooled,
+        theta = theta,
+        type = type,
+        return.pooled = TRUE,
+        par.clust = par.clust,
+        ncores = ncores,
+        cov.tol = cov.tol
+      )$theta.w.pooled
+    }
   }
 
   out <- list(
@@ -239,46 +261,57 @@ consensus.worker <- function(df, context) {
   w.part
 }
 
-#' Consensus algorithm jackknife bias correction
+#' Jackknife bias correction for consensus Monte Carlo
 #'
-#' Compute the jackknife estimate of the small sample bias that arises in the 
+#' Computes the jackknife estimate of the small sample bias that arises in the 
 #' consensus Monte Carlo algorithm. The result can be subtracted from the 
-#' consensus weighted sample to correct for this bias.
+#' pooled samples output of \code{consensus.weights} to correct for this bias.
+#'
+#' See \code{\link{consensus.weights}} for help on the arguments after
+#' \code{alpha}.
+#'
+#' Scott et al 2016 use \code{alpha = 0.2} in their examples.
 #'
 #' @seealso \code{consensus.weights}
 #'
-#' @param theta a matrix containing the pooled samples from all partial 
-#' posteriors, weighted using the consensus algorithm. See output field 
-#' \code{theta.w.pooled} from \code{\link{consensus.weights}}.
-#' @param subsamples a list of matrix, each consisting of (unweighted) samples 
-#' of model parameters from a single partial posterior, chosen at random from 
-#' all available samples from that partial posterior and representing a 
-#' proportion \code{alpha} of all available samples. See argument \code{theta} 
-#' to \code{\link{consensus.weights}}.
-#' @param alpha a number in [0,1], the proportion of samples taken from all 
-#' available from each partial posterior to form each element of 
-#' \code{subsamples}.
-#' @param type an integer, either 1 or 2, specifying the weighting type to use. 
-#' 1: use constant weighting. 2: weight samples using the sample covariance 
-#' matrices of the partial posteriors. Must be the same as used to compute the 
-#' weighted samples in \code{theta}.
-#' 
-#' @return A list with two elements: matrix \code{theta} of bias-corrected 
-#' pooled samples, similar to the argument of the same name, and \code{bias}, 
-#' the bias correction vector.
+#' @section References:
+#' \itemize{
+#' \item{Scott, Steven L., Blocker, A.W., Bonassi, F.V., Chipman, H.A., George, E.I. and McCulloch, R.E., 2016. Bayes and big data: The consensus Monte Carlo algorithm. \emph{International Journal of Management Science and Engineering Management}, 11(2), pp.78-88.}
+#' }
+#'
+#' @param alpha numeric between 0 and 1: the proportion of samples to use in 
+#' the bias estimation.
+#' @param a matrix of pooled, weighted samples from \code{consensus.weights}.
+#'
+#' @return A list with two elements:
+#' \item{B}{The bias estimate.}
+#' \item{theta.w.pooled}{A matrix of pooled, weighted and de-biased samples if 
+#' \code{return.pooled} is \code{TRUE}.}
 #' @export
-bias_correction <- function (
+consensus.bias_correction <- function(
+  alpha = 0.2,
+  theta.w.pooled,
   theta,
-  subsamples,
-  alpha,
-  type = 2
+  type = 2,
+  return.pooled = FALSE,
+  par.clust = NULL,
+  ncores = 1,
+  cov.tol = .Machine$double.eps
 ) {
-  subsamples.w.pooled <- consensus.master(subsamples, type = type, return.pooled = TRUE)$theta.w.pooled
+  sample_size <- ceiling(nrow(theta[[1]]) * alpha)
+  sample.w.pooled <- consensus.weights(
+    theta = lapply(theta, FUN = function(th) {th[sample(nrow(th), sample_size, replace = FALSE),,drop = FALSE]}),
+    type = type,
+    return.pooled = TRUE,
+    par.clust = par.clust,
+    ncores = ncores,
+    cov.tol = cov.tol
+  )$theta.w.pooled
 
-  bias <- (colMeans(subsamples.w.pooled) - colMeans(theta)) * alpha / (1 - alpha)
+  B <- (colMeans(sample.w.pooled) - colMeans(theta.w.pooled)) * alpha / (1 - alpha)
 
-  theta <- sweep(theta, MARGIN = 2, STATS = bias, FUN = "-", check.margin = FALSE)
+  theta.w.pooled <- sweep(theta.w.pooled, MARGIN = 2, STATS = B, FUN = "-", check.margin = FALSE)
 
-  return(list(theta = theta, bias = bias))
+  return(list(theta.w.pooled = theta.w.pooled, B = B))
 }
 

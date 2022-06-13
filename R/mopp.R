@@ -578,6 +578,11 @@ mopp.mkde <- function(
   } else {
     wn <- matrix(-log(H), H, 1)
   }
+
+  #BW.eig <- eigen(BW)
+  #BW.sqrt <- BW.eig$vectors %*% diag(sqrt(BW.eig$values)) %*% solve(BW.eig$vectors)
+  #BW.prec <- solve(BW.sqrt)
+  #BW.det <- determinant(BW)$modulus
   
   n <- nrow(x)
   y <- rep(-Inf, n)
@@ -590,8 +595,10 @@ mopp.mkde <- function(
     if ((k - 1) * nk + 1 > n) break
     chunk.inds <- ((k - 1) * nk + 1):min(k * nk, n)
     x.dist <- matrix(sweep(theta.rep[1:length(chunk.inds),,,drop = FALSE], MARGIN = c(1,3), STATS = x[chunk.inds,,drop = FALSE], FUN = "-", check.margin = FALSE), length(chunk.inds) * H, d)
+    #x.dist <- t(BW.prec %*% t(matrix(sweep(theta.rep[1:length(chunk.inds),,,drop = FALSE], MARGIN = c(1,3), STATS = x[chunk.inds,,drop = FALSE], FUN = "-", check.margin = FALSE), length(chunk.inds) * H, d)))
     f <- sweep(
       matrix(mvtnorm::dmvnorm(x.dist, sigma = BW, log = TRUE, checkSymmetry = FALSE), length(chunk.inds), H),
+      #matrix(mvtnorm::dmvnorm(x.dist, log = TRUE, checkSymmetry = FALSE), length(chunk.inds), H),
       MARGIN = 2,
       STATS = c(wn),
       FUN = "+",
@@ -599,6 +606,7 @@ mopp.mkde <- function(
     )
     y[chunk.inds] <- lrowsums(f, 2)
   }
+  #y <- y - 1 / 2 * BW.det
 
   if (!log.) y <- exp(y)
 

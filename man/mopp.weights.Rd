@@ -8,7 +8,7 @@ mopp.weights(
   x,
   theta,
   loglik = NULL,
-  loglik.fun,
+  loglik.fun = NULL,
   type = 2,
   w.type_1 = NULL,
   keep.type1 = TRUE,

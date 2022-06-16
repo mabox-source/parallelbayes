@@ -97,7 +97,7 @@ mopp.weights <- function(
   x,
   theta,
   loglik = NULL,
-  loglik.fun,
+  loglik.fun = NULL,
   type = 2,
   w.type_1 = NULL,
   keep.type1 = TRUE,
@@ -113,6 +113,7 @@ mopp.weights <- function(
   #  Setup.
   
   if (!("list" %in% class(theta))) stop("theta must be a list!")
+  if (is.null(loglik) && is.null(loglik.fun)) stop("One of loglik or loglik.fun must be supplied!")
   if (!(type %in% 1:2)) stop("type must be 1 or 2!")
   if (class(x)[1] == "tbl_spark") {
     if (!require(sparklyr)) stop("sparklyr is required!")
@@ -191,7 +192,7 @@ mopp.weights <- function(
   # it w.denominator.
   if (is.null(w.type_1)) {
     if (verbose) message("Computing type 1 weights...")
-    w.denominator <- matrix(ll.array[c(outer(1:H, (0:(dim(ll.array)[2] - 1)) * H, FUN = "+")) + (pp.inds - 1) * H * dim(ll.array)[2]], H, dim(ll.array)[2])
+    w.denominator <- matrix(ll.array[c(outer(1:H, (0:(dim(ll.array)[2] - 1)) * H, FUN = "+")) + (params$pp.inds - 1) * H * dim(ll.array)[2]], H, dim(ll.array)[2])
   
     w.type_1 <- matrix(w.numerator - w.denominator, dim(w.numerator)[1], dim(w.numerator)[2])
     # Need the shard specific sums of type 1 weights for normalisation of 
@@ -204,34 +205,15 @@ mopp.weights <- function(
     names(w.type_1) <- NULL
     if (verbose) message("Done.")
   }
-  # List of vectors.
-  if (verbose) message("Computing type 1 weights' normalising constants...")
-  if (params$use_parallel) {
-    w.sum_type_1 <- parallel::parLapply(par$par.clust, w.type_1, fun = function(ww) {lrowsums(ww, 1)})
-  } else {
-    w.sum_type_1 <- lapply(w.type_1, FUN = function(ww) {lrowsums(ww, 1)})
-  }
-  if (verbose) message("Done.")
-  # Normalise weights and convert to a list with the same structure as theta.
-  if (type == 1 || keep.type1) {
-    if (verbose) message("Normalising type 1 weights...")
-    for (i in 1:n_shards) {
-      if (any(!is.finite(w.sum_type_1[[i]]))) message(paste0("Sum of type 1 weights for shard ", i, " is zero. NaN returned for normalised weights."))
-    }
-    if (par$valid) {
-      wn.type_1 <- parallel::clusterMap(
-          par.clust,
-          fun = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)},
-          w.type_1,
-          w.sum_type_1,
-          SIMPLIFY = FALSE
-        )
-    } else {
-      wn.type_1 <- mapply(FUN = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)}, w.type_1, w.sum_type_1, SIMPLIFY = FALSE)
-    }
-
-    if (verbose) message("Done.")
-  }
+  norm <- mopp.normalise(
+    w = w.type_1,
+    type = 1,
+    just_compute_constant = type == 2 && !keep.type1,
+    par.clust = par$par.clust,
+    verbose = verbose
+  )
+  w.sum_type_1 <- norm$w.sum
+  wn.type_1 <- norm$wn
   
   # Type 2 weights.
   if (type == 2) {
@@ -247,23 +229,22 @@ mopp.weights <- function(
     w.type_2 <- matrix(w.numerator - type_2.mix, dim(w.numerator)[1], dim(w.numerator)[2])
     if (verbose) message("Done.")
   
-    # Normalisation for type 2 is relative to whole sample.
-    if (verbose) message("Computing type 2 normalising constants...")
-    w.sum_type_2 <- lrowsums(w.type_2, 1)
-    if (any(!is.finite(w.sum_type_2))) message("Sum of type 2 weights is zero. NaN returned for normalised weights.")
-    if (verbose) message("Done.")
-    if (verbose) message("Normalising type 2 weights...")
-    wn.type_2 <- sweep(w.type_2, STATS = w.sum_type_2, MARGIN = 2, FUN = "-", check.margin = FALSE)
-    # Split only preserves dimensions on data.frames, so convert to df first.
-    w.type_2 <- split(as.data.frame(w.type_2), params$pp.inds)
-    w.type_2 <- lapply(w.type_2, as.matrix)
-    w.type_2 <- lapply(w.type_2, FUN = function(ww){dimnames(ww) <- NULL; ww})
-    names(w.type_2) <- NULL
-    wn.type_2 <- split(as.data.frame(wn.type_2), params$pp.inds)
-    wn.type_2 <- lapply(wn.type_2, as.matrix)
-    wn.type_2 <- lapply(wn.type_2, FUN = function(ww){dimnames(ww) <- NULL; ww})
-    names(wn.type_2) <- NULL 
-    if (verbose) message("Done.")
+    norm <- mopp.normalise(
+      w = w.type_2,
+      type = 2,
+      pp.inds = params$pp.inds,
+      just_compute_constant = FALSE,
+      par.clust = par$par.clust,
+      verbose = verbose
+    )
+    wn.type_2 <- norm$wn
+    if (keep.unnormalised) {
+      # Split only preserves dimensions on data.frames, so convert to df first.
+      w.type_2 <- split(as.data.frame(w.type_2), params$pp.inds)
+      w.type_2 <- lapply(w.type_2, as.matrix)
+      w.type_2 <- lapply(w.type_2, FUN = function(ww){dimnames(ww) <- NULL; ww})
+      names(w.type_2) <- NULL
+    }
   }
   
   ############################################################################
@@ -280,7 +261,7 @@ mopp.weights <- function(
   out$Hvec <- Hvec
   if (return.loglik) out$loglik <- loglik
   
-  if (par$new) parallel::stopCluster(par.clust)
+  if (par$new) parallel::stopCluster(par$par.clust)
   
   return(out)
 }
@@ -597,6 +578,11 @@ mopp.mkde <- function(
   } else {
     wn <- matrix(-log(H), H, 1)
   }
+
+  #BW.eig <- eigen(BW)
+  #BW.sqrt <- BW.eig$vectors %*% diag(sqrt(BW.eig$values)) %*% solve(BW.eig$vectors)
+  #BW.prec <- solve(BW.sqrt)
+  #BW.det <- determinant(BW)$modulus
   
   n <- nrow(x)
   y <- rep(-Inf, n)
@@ -609,8 +595,10 @@ mopp.mkde <- function(
     if ((k - 1) * nk + 1 > n) break
     chunk.inds <- ((k - 1) * nk + 1):min(k * nk, n)
     x.dist <- matrix(sweep(theta.rep[1:length(chunk.inds),,,drop = FALSE], MARGIN = c(1,3), STATS = x[chunk.inds,,drop = FALSE], FUN = "-", check.margin = FALSE), length(chunk.inds) * H, d)
+    #x.dist <- t(BW.prec %*% t(matrix(sweep(theta.rep[1:length(chunk.inds),,,drop = FALSE], MARGIN = c(1,3), STATS = x[chunk.inds,,drop = FALSE], FUN = "-", check.margin = FALSE), length(chunk.inds) * H, d)))
     f <- sweep(
       matrix(mvtnorm::dmvnorm(x.dist, sigma = BW, log = TRUE, checkSymmetry = FALSE), length(chunk.inds), H),
+      #matrix(mvtnorm::dmvnorm(x.dist, log = TRUE, checkSymmetry = FALSE), length(chunk.inds), H),
       MARGIN = 2,
       STATS = c(wn),
       FUN = "+",
@@ -618,6 +606,7 @@ mopp.mkde <- function(
     )
     y[chunk.inds] <- lrowsums(f, 2)
   }
+  #y <- y - 1 / 2 * BW.det
 
   if (!log.) y <- exp(y)
 
@@ -725,6 +714,100 @@ mopp.quantile <- function(
   }
   
   return(q.hat)
+}
+
+#' Normalise MoPP weights
+#'
+#' Performs the self-normalisation of the importance weights in MoPP, necessary 
+#' for estimating posterior expectations with the weighted samples from partial 
+#' posteriors.
+#'
+#' Weight normalisation is done differently for the two versions of MoPP, as 
+#' specified by the \code{type} argument.
+#'
+#' The type 1 weights will be normalised relative to the partial posterior from 
+#' which the corresponding samples were drawn. This means if there are $M$ 
+#' partial posteriors, the sum of the normalised weights will be $M$.
+#'
+#' @param w either a single column matrix, if \code{type = 2}, or a list of 
+#' single column matrices, if \code{type = 1}, containing the unnormalised MoPP 
+#' weights on the log scale.
+#' @param type an integer, either 1 or 2, specifying the weighting type used. 
+#' @param pp.inds integer vector, required for type 2 if \code{as.list} is 
+#' \code{TRUE} (default), with one element for each row of \code{w}: the index 
+#' of the partial posterior the corresponding sample is from.
+#' @param just_compute_constant Logical. If \code{TRUE}, only the normalising 
+#' constant(s) will be computed and returned - not the normalised weights.
+#' @param par.clust an optional cluster connection object from package 
+#' \code{parallel}.
+#' @return A list containing fields:
+#' \item{wn}{A list of single column matrices, if \code{type = 1}, containing 
+#' the normalised MoPP weights on the log scale. If \code{as.list} is 
+#' \code{FALSE} and \code{type} is 2, these will be returned as a single 
+#' matrix.}
+#' \item{w.sum}{Either a numeric, if \code{type = 2}, or a list of numerics, if 
+#' \code{type = 1}, reporting the normalising constants used (log scale).}
+#'
+#' @export
+mopp.normalise <- function(
+  w,
+  type,
+  pp.inds = NULL,
+  just_compute_constant = FALSE,
+  as.list = TRUE,
+  par.clust = NULL,
+  verbose = FALSE
+) {
+  if (type == 1) {
+    if (verbose) message("Computing type 1 weights' normalising constants...")
+    if (!is.null(par.clust)) {
+      w.sum <- parallel::parLapply(par.clust, w, fun = function(ww) {lrowsums(ww, 1)})
+    } else {
+      w.sum <- lapply(w, FUN = function(ww) {lrowsums(ww, 1)})
+    }
+    if (verbose) message("Done.")
+    if (!just_compute_constant) {
+      # Normalise weights and convert to a list with the same structure as theta.
+      if (verbose) message("Normalising type 1 weights...")
+      for (i in 1:length(w)) {
+        if (any(!is.finite(w.sum[[i]]))) message(paste0("Sum of type 1 weights for shard ", i, " is zero. NaN returned for normalised weights."))
+      }
+      if (!is.null(par.clust)) {
+        wn <- parallel::clusterMap(
+            par.clust,
+            fun = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)},
+            w,
+            w.sum,
+            SIMPLIFY = FALSE
+          )
+      } else {
+        wn <- mapply(FUN = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)}, w, w.sum, SIMPLIFY = FALSE)
+      }
+      if (verbose) message("Done.")
+    } else {wn <- NULL}
+
+  } else if (type == 2) {
+    # Normalisation for type 2 is relative to whole sample.
+    if (verbose) message("Computing type 2 normalising constants...")
+    w.sum <- lrowsums(w, 1)
+    if (any(!is.finite(w.sum))) message("Sum of type 2 weights is zero. NaN returned for normalised weights.")
+    if (verbose) message("Done.")
+    if (!just_compute_constant) {
+      if (verbose) message("Normalising type 2 weights...")
+      wn <- sweep(w, STATS = w.sum, MARGIN = 2, FUN = "-", check.margin = FALSE)
+      if (as.list) {
+        # Split only preserves dimensions on data.frames, so convert to df first.
+        wn <- split(as.data.frame(wn), pp.inds)
+        wn <- lapply(wn, as.matrix)
+        wn <- lapply(wn, FUN = function(ww){dimnames(ww) <- NULL; ww})
+        names(wn) <- NULL
+      }
+      if (verbose) message("Done.")
+    } else {wn <- NULL}
+
+  } else {stop("type must be 1 or 2!")}
+
+  return(list(wn = wn, w.sum = w.sum))
 }
 
 

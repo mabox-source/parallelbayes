@@ -272,6 +272,7 @@ parallel.start <- function(par.clust = NULL, ncores = 1) {
     valid <- TRUE
   } else {
     if (ncores > 1) message("Package parallel not found, using ncores = 1.")
+    par.clust <- NULL
     valid <- FALSE
     new <- FALSE
   }

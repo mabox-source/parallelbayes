@@ -8,6 +8,8 @@ consensus.weights(
   theta,
   type = 2,
   return.pooled = FALSE,
+  correct.bias = FALSE,
+  alpha = 0.2,
   par.clust = NULL,
   ncores = 1,
   cov.tol = .Machine$double.eps
@@ -29,6 +31,14 @@ matrices of the partial posteriors.}
 returned. If Spark is used, this means returned to local memory (the calling 
 environment) - in either case, weighted samples will be returned in a Spark 
 table.}
+
+\item{correct.bias}{Logical. If \code{TRUE}, the small sample bias 
+correction is applied to the pooled samples. Has no effect if 
+\code{return.pooled} is \code{FALSE}.}
+
+\item{alpha}{numeric between 0 and 1: the proportion of samples to use in 
+the bias estimation. Default is 0.2; ignored if \code{correct.bias} is 
+\code{FALSE}.}
 
 \item{par.clust}{an optional cluster connection object from package 
 \code{parallel}. Ignored if \code{theta} is a Spark table.}

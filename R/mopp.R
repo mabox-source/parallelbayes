@@ -55,14 +55,15 @@
 #' matrices, whose values are log likelihoods. See details.
 #' @param loglik.fun the log likelihood function. Optional if \code{loglik} is 
 #' supplied. See details.
-#' @param type an integer, either 1 or 2, specifying the weighting type to use. 
+#' @param type an integer, either 1, 2 or 3, specifying the weighting type to 
+#' use.
 #' @param w.type_1 an optional list of single column matrices containing the 
 #' unnormalised MoPP type 1 weights, the same as the output field. Supply this 
 #' to speed up computation of the type 2 weights if the type 1 weights have 
 #' already been computated.
 #' @param keep.type1 logical. If \code{TRUE} the type 1 weights are returned as 
-#' well as the type 2 weights when \code{type = 2}. This is faster than 
-#' computing the type 1 and type 2 weights separately.
+#' well as the type 2/3 weights when \code{type = 2} or \code{type = 3}. This 
+#' is faster than computing the different weights separately.
 #' @param keep.unnormalised logical. If \code{TRUE} the unnormalised weights 
 #' are returned as well as the normalised.
 #' @param return.loglik logical. If \code{TRUE} the log likelihoods are 
@@ -79,15 +80,23 @@
 #' @return A list containing fields:
 #' \item{Hvec}{A vector of the number of samples from each partial 
 #' posterior.}
-#' \item{wn.type_1 or wn.type_2}{The normalised weighted of type 1 or type 2, 
-#' depending on the value of \code{type}.}
+#' \item{wn.type_1, wn.type_2 or wn.type_3}{The normalised weighted of type 1, 
+#' 2 or type 3, depending on the value of \code{type}.}
 #' \item{wn.type_1}{Additionally returned if \code{keep.type1} is \code{TRUE}.}
 #' \item{w.type_1}{The corresponding unnormalised weights, if 
-#' \code{keep.unnormalised} is \code{TRUE}}
+#' \code{keep.unnormalised} is \code{TRUE} and \code{type = 1}}
 #' \item{w.type_2}{The corresponding unnormalised weights, if 
-#' \code{keep.unnormalised} is \code{TRUE}}
+#' \code{keep.unnormalised} is \code{TRUE} and \code{type = 2}}
+#' \item{w.type_3}{The corresponding unnormalised weights, if 
+#' \code{keep.unnormalised} is \code{TRUE} and \code{type = 3}}
 #' \item{loglik}{log likelihoods, returned if \code{return.loglik} is 
 #' \code{TRUE}}
+#' \item{subsamples}{List of samples, like \code{theta}, after taking a 
+#' subsample in the \code{type = 3} algorithm}
+#' \item{subsample.inds}{List of sample indices indicating which were taken in 
+#' the subsample in the \code{type = 3} algorithm}
+#' \item{kl_hat}{Estimates of the KL divergence from the posterior distribution 
+#' to each of the partial posteriors. Only returned if \code{type = 3}}
 #' Weights and log likelihoods are returned as lists of matrices with 1 column 
 #' and rows corresponding to sample. The list elements correspond to partial 
 #' posterior (same as argument \code{theta}).
@@ -98,7 +107,8 @@ mopp.weights <- function(
   theta,
   loglik = NULL,
   loglik.fun = NULL,
-  type = 2,
+  type = 1,
+  subsample_size = NULL,
   w.type_1 = NULL,
   keep.type1 = TRUE,
   keep.unnormalised = FALSE,
@@ -114,7 +124,7 @@ mopp.weights <- function(
   
   if (!("list" %in% class(theta))) stop("theta must be a list!")
   if (is.null(loglik) && is.null(loglik.fun)) stop("One of loglik or loglik.fun must be supplied!")
-  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
+  if (!(type %in% 1:3)) stop("type must be 1, 2 or 3!")
   if (class(x)[1] == "tbl_spark") {
     if (!require(sparklyr)) stop("sparklyr is required!")
     use_spark <- TRUE
@@ -128,6 +138,15 @@ mopp.weights <- function(
   Hvec <- sapply(theta, nrow)
   if (any(Hvec < 1)) stop("Insufficient useable samples!")
   H <- sum(Hvec)
+  if (type == 3) {
+    if (is.null(subsample_size)) {
+      subsample_size <- min(sapply(theta, nrow))
+    } else if (subsample_size > H) {
+      stop("subsample_size is too large!")
+    } else if (subsample_size > min(sapply(theta, nrow))) {
+      warning("Using a subsample_size greater than the least number of samples from any partial posterior may result in a biased estimator.")
+    }
+  }
   # Dimension of the model.
   d <- ncol(theta[[1]])
   # Record which partial posterior each sample came from.
@@ -208,7 +227,7 @@ mopp.weights <- function(
   norm <- mopp.normalise(
     w = w.type_1,
     type = 1,
-    just_compute_constant = type == 2 && !keep.type1,
+    just_compute_constant = type %in% 2:3 && !keep.type1,
     par.clust = par$par.clust,
     verbose = verbose
   )
@@ -245,11 +264,82 @@ mopp.weights <- function(
       w.type_2 <- lapply(w.type_2, FUN = function(ww){dimnames(ww) <- NULL; ww})
       names(w.type_2) <- NULL
     }
+  } else if (type == 3) {
+    if (verbose) message("Computing type 3 weights...")
+    # Estimates of the KL divergences.
+    kl_hat <- sapply(1:length(Hvec),
+      FUN = function(j) {
+        -sum(w.type_1[[j]]) / Hvec[j] +
+        w.sum_type_1[[j]] - log(Hvec[j])
+      }
+    )
+    # Mixture component weights.
+    q <- 1 / kl_hat
+    q <- q / sum(q)
+    # Take subsample from theta.
+    subsample.absolute_inds <- sample.int(H, size = subsample_size, prob = rep(q / Hvec, Hvec))
+    split_inds <- findInterval(subsample.absolute_inds, cumsum(c(0, Hvec[1:(length(Hvec) - 1)])) + 1)
+    subsample.inds <- split(subsample.absolute_inds, split_inds)
+    if (!is.null(par.clust)) {
+      subsample.inds <- parallel::clusterMap(
+        par.clust,
+        fun = function(inds, Hi) {inds - Hi},
+        subsample.inds,
+        cumsum(c(0, Hvec[1:(length(Hvec) - 1)])),
+        SIMPLIFY = FALSE
+      )
+      subsamples <- parallel::clusterMap(
+        par.clust,
+        fun = function(th, inds) {th[inds,,drop = FALSE]},
+        theta,
+        subsample.inds,
+        SIMPLIFY = FALSE
+      )
+    } else {
+      subsample.inds <- mapply(
+        FUN = function(inds, Hi) {inds - Hi},
+        subsample.inds,
+        cumsum(c(0, Hvec[1:(length(Hvec) - 1)])),
+        SIMPLIFY = FALSE
+      )
+      subsamples <- mapply(
+        FUN = function(th, inds) {th[inds,,drop = FALSE]},
+        theta,
+        subsample.inds,
+        SIMPLIFY = FALSE
+      )
+    }
+    # Want this as a matrix.
+    w.sum_type_1 <- abind::abind(w.sum_type_1, along = 2)
+    # Need to weight each partial posterior density in ll.array by the mean of 
+    # the type 1 weights.
+    # Note: division of w.sum_type_1 by n samples, to get the mean, cancels 
+    # with multiplication by n samples in the mixture weights.
+    type_3.mix <- sweep(sweep(ll.array[subsample.absolute_inds,,,drop = FALSE], MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE), MARGIN = 3, STATS = log(q) - log(Hvec), FUN = "+", check.margin = FALSE)
+    type_3.mix <- lrowsums(type_3.mix, 3, drop. = TRUE)
+    w.type_3 <- matrix(w.numerator[subsample.absolute_inds,,drop = FALSE] - type_3.mix, subsample_size, dim(w.numerator)[2])
+    if (verbose) message("Done.")
+  
+    norm <- mopp.normalise(
+      w = w.type_3,
+      type = 3,
+      just_compute_constant = FALSE,
+      par.clust = par$par.clust,
+      verbose = verbose
+    )
+    wn.type_3 <- norm$wn
   }
   
   ############################################################################
   # Output.
   out <- list()
+  if (type == 3) {
+    out$subsamples <- subsamples
+    out$subsample.inds <- subsample.inds
+    if (keep.unnormalised) out$w.type_3 <- w.type_3
+    out$wn.type_3 <- wn.type_3
+    out$kl_hat <- kl_hat
+  }
   if (type == 2) {
     if (keep.unnormalised) out$w.type_2 <- w.type_2
     out$wn.type_2 <- wn.type_2
@@ -313,7 +403,7 @@ likelihood.worker <- function(df, context) {
 #'
 #' Compute a Monte Carlo estimate of the expectation of a function of model 
 #' parameters. Samples of the parameter vector are weighted using the MoPP type 
-#' 1 or type 2 importance weights.
+#' 1, 2 or 3 importance weights.
 #'
 #' \code{FUN} should take a matrix argument and return a matrix. The argument 
 #' matrix should be a matrix of samples, just like the elements of 
@@ -328,12 +418,13 @@ likelihood.worker <- function(df, context) {
 #' number of columns, which correspond to model parameters (including 
 #' components of parameter vectors). Each list element corresponds to a single 
 #' partial posterior.
-#' @param wn a list of matrices, each containing normalised weights, one for 
-#' each sample in \code{theta} and obtained using the 
-#' \code{\link{mopp.weights}} function.
+#' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+#' matrix (\code{type = 3}), each containing normalised weights, one for each 
+#' sample in \code{theta} and obtained using the \code{\link{mopp.weights}} 
+#' function.
 #' @param FUN a matrix-valued function that we wish to estimate the expected 
 #' value of. See details.
-#' @param type an integer, either 1 or 2, specifying the weighting type used.
+#' @param type an integer, either 1, 2 or 3, specifying the weighting type used.
 #' @param Hvec an optional vector specifying the number of samples taken from 
 #' each partial posterior.
 #'
@@ -348,10 +439,10 @@ mopp.mean <- function(
   Hvec = NULL
 ) {
   if (class(theta) != "list") stop("theta must be a list!")
-  if (class(wn) != "list") stop("wn must be a list!")
+  if (type != 3 && class(wn) != "list") stop("wn must be a list!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
-  if (any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
-  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
+  if (type != 3 && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (!(type %in% 1:3)) stop("type must be 1, 2 or 3!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
   
   # In type 1 we need to add the mixture distribution weights (these are already 
@@ -368,7 +459,7 @@ mopp.mean <- function(
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  wn <- abind::abind(wn, along = 1)
+  if (type != 3) wn <- abind::abind(wn, along = 1)
   
   # Positivisation:
   # The expectation is estimated as a weighted sum. This can be computed 
@@ -414,13 +505,14 @@ mopp.mean <- function(
 #' number of columns, which correspond to model parameters (including 
 #' components of parameter vectors). Each list element corresponds to a single 
 #' partial posterior.
-#' @param wn a list of matrices, each containing normalised weights, one for 
-#' each sample in \code{theta} and obtained using the 
-#' \code{\link{mopp.weights}} function.
+#' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+#' matrix (\code{type = 3}), each containing normalised weights, one for each 
+#' sample in \code{theta} and obtained using the \code{\link{mopp.weights}} 
+#' function.
 #' @param bw the smoothing bandwidth to be used. The kernels are scaled such 
 #' that this is the standard deviation of the (Gaussian) smoothing kernel.
-#' @param type an integer, either 0, 1 or 2, specifying the weighting type 
-#' used. Types 1 and 2 refer to the MoPP weighting algorithms (see 
+#' @param type an integer, either 0, 1, 2 or 3, specifying the weighting type 
+#' used. Types 1, 2 and 3 refer to the MoPP weighting algorithms (see 
 #' \code{mopp.weights}). Type 0 can be used to use uniform weights, which 
 #' allows one to supply samples from another algorithm; in this case, \code{wn} 
 #' is not required.
@@ -446,10 +538,10 @@ mopp.kde <- function(
   mem.limit = 1024^3
 ) {
   if (class(theta) != "list") stop("theta must be a list!")
-  if (!(type %in% 0:2)) stop("type must be 0, 1 or 2!")
+  if (!(type %in% 0:3)) stop("type must be 0, 1, 2 or 3!")
+  if (!(type %in% c(0,3)) && class(wn) != "list") stop("wn must be a list!")
+  if (!(type %in% c(0,3)) && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
   if (type == 0) warning("Using uniform weights.")
-  if (type != 0 && class(wn) != "list") stop("wn must be a list!")
-  if (type != 0 && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
   if (bw <= 0) stop("bw must be positive!")
@@ -469,9 +561,9 @@ mopp.kde <- function(
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  if (type != 0) {
+  if (!(type %in% c(0, 3))) {
     wn <- unlist(wn)
-  } else {
+  } else if (type == 3) {
     wn <- matrix(-log(H), H, 1)
   }
   
@@ -513,14 +605,15 @@ mopp.kde <- function(
 #' number of columns, which correspond to model parameters (including 
 #' components of parameter vectors). Each list element corresponds to a single 
 #' partial posterior.
-#' @param wn a list of matrices, each containing normalised weights, one for 
-#' each sample in \code{theta} and obtained using the 
-#' \code{\link{mopp.weights}} function.
+#' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+#' matrix (\code{type = 3}), each containing normalised weights, one for each 
+#' sample in \code{theta} and obtained using the \code{\link{mopp.weights}} 
+#' function.
 #' @param BW symmetric positive definite matrix, the smoothing bandwidth to be 
 #' used, as a covariance matrix. The kernels are scaled such that this is the 
 #' covariance matrix of the (multivariate Gaussian) smoothing kernel.
-#' @param type an integer, either 0, 1 or 2, specifying the weighting type 
-#' used. Types 1 and 2 refer to the MoPP weighting algorithms (see 
+#' @param type an integer, either 0, 1, 2 or 3, specifying the weighting type 
+#' used. Types 1, 2 and 3 refer to the MoPP weighting algorithms (see 
 #' \code{mopp.weights}). Type 0 can be used to use uniform weights, which 
 #' allows one to supply samples from another algorithm; in this case, \code{wn} 
 #' is not required.
@@ -545,11 +638,11 @@ mopp.mkde <- function(
   log. = FALSE,
   mem.limit = 1024^3
 ) {
-  if (class(theta) != "list") stop("theta must be a list!")
-  if (!(type %in% 0:2)) stop("type must be 0, 1 or 2!")
+  if (!(type %in% 0:3)) stop("type must be 0, 1, 2 or 3!")
+  if (!(type %in% c(0,3)) && class(wn) != "list") stop("wn must be a list!")
+  if (!(type %in% c(0,3)) && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
   if (type == 0) warning("Using uniform weights.")
-  if (type != 0 && class(wn) != "list") stop("wn must be a list!")
-  if (type != 0 && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (class(theta) != "list") stop("theta must be a list!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
   # Check BW is a symmetric positive definite matrix.
@@ -573,9 +666,9 @@ mopp.mkde <- function(
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  if (type != 0) {
+  if (!(type %in% c(0, 3))) {
     wn <- unlist(wn)
-  } else {
+  } else if (type == 3) {
     wn <- matrix(-log(H), H, 1)
   }
 
@@ -638,12 +731,13 @@ mopp.mkde <- function(
 #' partial posterior.
 #' @param prob a probability, in [0, 1], corresponding to the quantile of 
 #' \code{FUN} to be estimated.
-#' @param wn a list of matrices, each containing normalised weights, one for 
-#' each sample in \code{theta} and obtained using the 
-#' \code{\link{mopp.weights}} function.
+#' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+#' matrix (\code{type = 3}), each containing normalised weights, one for each 
+#' sample in \code{theta} and obtained using the \code{\link{mopp.weights}} 
+#' function.
 #' @param FUN a matrix-valued function that we wish to estimate the expected 
 #' value of. See details.
-#' @param type an integer, either 1 or 2, specifying the weighting type used.
+#' @param type an integer, either 1, 2 or 3, specifying the weighting type used.
 #' @param tol a number specifying the tolerance level for convergence of 
 #' numerical root finding. See \code{\link{uniroot}} for details.
 #' @param Hvec an optional vector specifying the number of samples taken from 
@@ -663,10 +757,10 @@ mopp.quantile <- function(
   Hvec = NULL
 ) {
   if (class(theta) != "list") stop("theta must be a list!")
-  if (class(wn) != "list") stop("wn must be a list!")
+  if (type != 3 && class(wn) != "list") stop("wn must be a list!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
-  if (any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
-  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
+  if (type != 3 && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (!(type %in% 1:3)) stop("type must be 1, 2 or 3!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
   
   # In type 1 we need to add the mixture distribution weights (these are already 
@@ -683,7 +777,7 @@ mopp.quantile <- function(
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  wn <- abind::abind(wn, along = 1)
+  if (type != 3) wn <- abind::abind(wn, along = 1)
 
   # Check dimension of function output.
   d <- ncol(FUN(theta[1,,drop = FALSE]))
@@ -729,24 +823,27 @@ mopp.quantile <- function(
 #' which the corresponding samples were drawn. This means if there are $M$ 
 #' partial posteriors, the sum of the normalised weights will be $M$.
 #'
-#' @param w either a single column matrix, if \code{type = 2}, or a list of 
-#' single column matrices, if \code{type = 1}, containing the unnormalised MoPP 
-#' weights on the log scale.
-#' @param type an integer, either 1 or 2, specifying the weighting type used. 
+#' @param w either a single column matrix, if \code{type = 2} or 
+#' \code{type = 3}, or a list of single column matrices, if \code{type = 1}, 
+#' containing the unnormalised MoPP weights on the log scale.
+#' @param type an integer, either 1, 2 or 3, specifying the weighting type used.
 #' @param pp.inds integer vector, required for type 2 if \code{as.list} is 
 #' \code{TRUE} (default), with one element for each row of \code{w}: the index 
 #' of the partial posterior the corresponding sample is from.
 #' @param just_compute_constant Logical. If \code{TRUE}, only the normalising 
 #' constant(s) will be computed and returned - not the normalised weights.
+#' @param as.list logical. If \code{TRUE} the normalised type 2 weights will be 
+#' returned as a list, split according to \code{pp.inds}.
 #' @param par.clust an optional cluster connection object from package 
 #' \code{parallel}.
 #' @return A list containing fields:
 #' \item{wn}{A list of single column matrices, if \code{type = 1}, containing 
 #' the normalised MoPP weights on the log scale. If \code{as.list} is 
 #' \code{FALSE} and \code{type} is 2, these will be returned as a single 
-#' matrix.}
-#' \item{w.sum}{Either a numeric, if \code{type = 2}, or a list of numerics, if 
-#' \code{type = 1}, reporting the normalising constants used (log scale).}
+#' matrix. If \code{type}, a single column matrix.}
+#' \item{w.sum}{Either a numeric, if \code{type = 2} or \code{type = 3}, or a 
+#' list of numerics, if \code{type = 1}, reporting the normalising constants 
+#' used (log scale).}
 #'
 #' @export
 mopp.normalise <- function(
@@ -786,16 +883,16 @@ mopp.normalise <- function(
       if (verbose) message("Done.")
     } else {wn <- NULL}
 
-  } else if (type == 2) {
+  } else if (type %in% 2:3) {
     # Normalisation for type 2 is relative to whole sample.
-    if (verbose) message("Computing type 2 normalising constants...")
+    if (verbose) message(paste0("Computing type ", type, " normalising constants..."))
     w.sum <- lrowsums(w, 1)
-    if (any(!is.finite(w.sum))) message("Sum of type 2 weights is zero. NaN returned for normalised weights.")
+    if (any(!is.finite(w.sum))) message(paste0("Sum of type ", type, " weights is zero. NaN returned for normalised weights."))
     if (verbose) message("Done.")
     if (!just_compute_constant) {
-      if (verbose) message("Normalising type 2 weights...")
+      if (verbose) message(paste("Normalising type ", type, " weights..."))
       wn <- sweep(w, STATS = w.sum, MARGIN = 2, FUN = "-", check.margin = FALSE)
-      if (as.list) {
+      if (type == 2 && as.list) {
         # Split only preserves dimensions on data.frames, so convert to df first.
         wn <- split(as.data.frame(wn), pp.inds)
         wn <- lapply(wn, as.matrix)
@@ -805,7 +902,7 @@ mopp.normalise <- function(
       if (verbose) message("Done.")
     } else {wn <- NULL}
 
-  } else {stop("type must be 1 or 2!")}
+  } else {stop("type must be 1, 2 or 3!")}
 
   return(list(wn = wn, w.sum = w.sum))
 }

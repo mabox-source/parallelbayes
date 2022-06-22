@@ -57,6 +57,8 @@
 #' supplied. See details.
 #' @param type an integer, either 1, 2 or 3, specifying the weighting type to 
 #' use.
+#' @param laplace.type_3.scale an optional matrix
+#' @param laplace.type_3.dof an optional numeric. Must be greater than the dimension of the model plus 1.
 #' @param w.type_1 an optional list of single column matrices containing the 
 #' unnormalised MoPP type 1 weights, the same as the output field. Supply this 
 #' to speed up computation of the type 2 weights if the type 1 weights have 
@@ -109,6 +111,12 @@ mopp.weights <- function(
   loglik.fun = NULL,
   type = 1,
   subsample_size = NULL,
+  laplace.type_1 = FALSE,
+  laplace.type_2 = FALSE,
+  laplace.type_3 = FALSE,
+  laplace.sample_size = NULL,
+  laplace.type_3.scale = NULL,
+  laplace.type_3.dof = NULL,
   w.type_1 = NULL,
   keep.type1 = TRUE,
   keep.unnormalised = FALSE,
@@ -141,6 +149,7 @@ mopp.weights <- function(
   if (type == 3) {
     if (is.null(subsample_size)) {
       subsample_size <- min(sapply(theta, nrow))
+      if (laplace.type_2 || laplace.type_3) subsample_size <- min(subsample_size, laplace.sample_size)
     } else if (subsample_size > H) {
       stop("subsample_size is too large!")
     } else if (subsample_size > min(sapply(theta, nrow))) {
@@ -172,6 +181,51 @@ mopp.weights <- function(
     loglik.fun = loglik.fun,
     d = d
   )
+
+  if ((laplace.type_2 || laplace.type_3) && is.null(laplace.sample_size)) laplace.sample_size <- max(Hvec)
+
+  # Sample from Laplace approximations.
+# HVE NOT YET WORKED OUT HOW THIS WORKS WITH SPARK.
+  if (laplace.type_1) {
+    laplace.type_1.samples <- consensus.weights(
+      theta,
+      type = 2,
+      return.pooled = TRUE,
+      par.clust = par$par.clust,
+    )$theta.w.pooled
+    laplace.type_1.mean <- colMeans(laplace.type_1.samples)
+    laplace.type_1.cov <- crossprod(sweep(laplace.type_1.samples, MARGIN = 2, STATS = laplace.type_1.mean, FUN = "-", check.margin = FALSE)) / (nrow(laplace.type_1.samples) - 1)
+    ctx$theta <- rbind(ctx$theta, laplace.type_1.samples)
+    ctx$H <- ctx$H + nrow(laplace.type_1.samples)
+    params$pp.inds <- c(params$pp.inds, rep(max(params$pp.inds) + 1, nrow(laplace.type_1.samples)))
+    params$Hvec <- c(params$Hvec, nrow(laplace.type_1.samples))
+  } else {laplace.type_1.samples <- matrix(NA, 0, d)}
+  if (laplace.type_2) {
+    theta.pooled <- abind::abind(theta, along = 1)
+    laplace.type_2.mean <- colMeans(theta.pooled)
+    # Sample covariance matrix.
+    laplace.type_2.cov <- crossprod(sweep(theta.pooled, MARGIN = 2, STATS = laplace.type_2.mean, FUN = "-", check.margin = FALSE)) / (H - 1)
+    # Sample from multivariate normal distribution.
+    laplace.type_2.samples <- MASS::mvrnorm(laplace.sample_size, laplace.type_2.mean, laplace.type_2.cov)
+    rm(theta.pooled)
+    ctx$theta <- rbind(ctx$theta, laplace.type_2.samples)
+    ctx$H <- ctx$H + laplace.sample_size
+    params$pp.inds <- c(params$pp.inds, rep(max(params$pp.inds) + 1, laplace.sample_size))
+    params$Hvec <- c(params$Hvec, laplace.sample_size)
+  } else {laplace.type_2.samples <- matrix(NA, 0, d)}
+  if (laplace.type_3) {
+    if (is.null(laplace.type_3.scale)) laplace.type_3.scale <- matrix(2.5 ^ 2, d, d)
+    if (is.null(laplace.type_3.dof)) laplace.type_3.dof <- d + 2
+    laplace.type_3.mean <- colMeans(abind::abind(theta, along = 1))
+    S <- crossprod(abind::abind(lapply(theta, FUN = function(th) {sweep(th, MARGIN = 2, STATS = colMeans(th), FUN = "-", check.margin = FALSE)}), along = 1))
+    # Sample from multivariate normal distribution.
+    laplace.type_3.cov <- (S + laplace.type_3.scale) / (H + laplace.type_3.dof - d - 1)
+    laplace.type_3.samples <- MASS::mvrnorm(laplace.sample_size, laplace.type_3.mean, laplace.type_3.cov)
+    ctx$theta <- rbind(ctx$theta, laplace.type_3.samples)
+    ctx$H <- ctx$H + laplace.sample_size
+    params$pp.inds <- c(params$pp.inds, rep(max(params$pp.inds) + 1, laplace.sample_size))
+    params$Hvec <- c(params$Hvec, laplace.sample_size)
+  } else {laplace.type_3.samples <- matrix(NA, 0, d)}
   
   
   ##############################################################################
@@ -211,7 +265,13 @@ mopp.weights <- function(
   # it w.denominator.
   if (is.null(w.type_1)) {
     if (verbose) message("Computing type 1 weights...")
-    w.denominator <- matrix(ll.array[c(outer(1:H, (0:(dim(ll.array)[2] - 1)) * H, FUN = "+")) + (params$pp.inds - 1) * H * dim(ll.array)[2]], H, dim(ll.array)[2])
+    # Weight denominator for non-Laplace samples.
+    #w.denominator <- matrix(ll.array[c(outer(1:H, (0:(dim(ll.array)[2] - 1)) * H, FUN = "+")) + (params$pp.inds[1:H] - 1) * H * dim(ll.array)[2]], H, dim(ll.array)[2])
+    w.denominator <- matrix(ll.array[1:H + (params$pp.inds[1:H] - 1) * H], H, 1)
+    # Weight denominator for Laplace samples.
+    if (laplace.type_1) w.denominator <- c(w.denominator, mvtnorm::dmvnorm(laplace.type_1.samples, laplace.type_1.mean, laplace.type_1.cov, log = TRUE))
+    if (laplace.type_2) w.denominator <- c(w.denominator, mvtnorm::dmvnorm(laplace.type_2.samples, laplace.type_2.mean, laplace.type_2.cov, log = TRUE))
+    if (laplace.type_3) w.denominator <- c(w.denominator, mvtnorm::dmvnorm(laplace.type_3.samples, laplace.type_3.mean, laplace.type_3.cov, log = TRUE))
   
     w.type_1 <- matrix(w.numerator - w.denominator, dim(w.numerator)[1], dim(w.numerator)[2])
     # Need the shard specific sums of type 1 weights for normalisation of 
@@ -243,7 +303,7 @@ mopp.weights <- function(
     # the type 1 weights.
     # Note: division of w.sum_type_1 by n samples, to get the mean, cancels 
     # with multiplication by n samples in the mixture weights.
-    type_2.mix <- sweep(ll.array, MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE) - log(H)
+    type_2.mix <- sweep(ll.array, MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE) - log(ctx$H)
     type_2.mix <- lrowsums(type_2.mix, 3, drop. = TRUE)
     w.type_2 <- matrix(w.numerator - type_2.mix, dim(w.numerator)[1], dim(w.numerator)[2])
     if (verbose) message("Done.")
@@ -267,25 +327,45 @@ mopp.weights <- function(
   } else if (type == 3) {
     if (verbose) message("Computing type 3 weights...")
     # Estimates of the KL divergences.
+    # These are for the non-Laplace samples.
     kl_hat <- sapply(1:length(Hvec),
       FUN = function(j) {
         -sum(w.type_1[[j]]) / Hvec[j] +
         w.sum_type_1[[j]] - log(Hvec[j])
       }
     )
+    # Add in the KL divergence estimates for the Laplace samples.
+    if (laplace.type_1) {
+      entropy <- 1 / 2 * determinant(2 * pi * exp(1) * laplace.type_1.cov, logarithm = TRUE)$modulus
+      ind <- n_shards + 1
+      kl_hat <- c(kl_hat, -sum(w.type_1[[ind]]) / params$Hvec[ind] + w.sum_type_1[[ind]] - log(params$Hvec[ind]) - entropy)
+    }
+    if (laplace.type_2) {
+      entropy <- 1 / 2 * determinant(2 * pi * exp(1) * laplace.type_2.cov, logarithm = TRUE)$modulus
+      ind <- n_shards + laplace.type_1 + 1
+      kl_hat <- c(kl_hat, -sum(w.type_1[[ind]]) / params$Hvec[ind] + w.sum_type_1[[ind]] - log(params$Hvec[ind]) - entropy)
+    }
+    if (laplace.type_3) {
+      entropy <- 1 / 2 * determinant(2 * pi * exp(1) * laplace.type_3.cov, logarithm = TRUE)$modulus
+      ind <- n_shards + laplace.type_1 + laplace.type_2 + 1
+      kl_hat <- c(kl_hat, -sum(w.type_1[[ind]]) / params$Hvec[ind] + w.sum_type_1[[ind]] - log(params$Hvec[ind]) - entropy)
+    }
     # Mixture component weights.
     q <- 1 / kl_hat
     q <- q / sum(q)
     # Take subsample from theta.
-    subsample.absolute_inds <- sample.int(H, size = subsample_size, prob = rep(q / Hvec, Hvec))
-    split_inds <- findInterval(subsample.absolute_inds, cumsum(c(0, Hvec[1:(length(Hvec) - 1)])) + 1)
+    subsample.absolute_inds <- sample.int(ctx$H, size = subsample_size, prob = rep(q / params$Hvec, params$Hvec))
+    split_inds <- findInterval(subsample.absolute_inds, cumsum(c(0, params$Hvec[1:(length(params$Hvec) - 1)])) + 1)
     subsample.inds <- split(subsample.absolute_inds, split_inds)
+    if (laplace.type_1) theta <- c(theta, list(laplace.type_1.samples))
+    if (laplace.type_2) theta <- c(theta, list(laplace.type_2.samples))
+    if (laplace.type_3) theta <- c(theta, list(laplace.type_3.samples))
     if (!is.null(par.clust)) {
       subsample.inds <- parallel::clusterMap(
         par.clust,
         fun = function(inds, Hi) {inds - Hi},
         subsample.inds,
-        cumsum(c(0, Hvec[1:(length(Hvec) - 1)])),
+        cumsum(c(0, params$Hvec[1:(length(params$Hvec) - 1)])),
         SIMPLIFY = FALSE
       )
       subsamples <- parallel::clusterMap(
@@ -299,7 +379,7 @@ mopp.weights <- function(
       subsample.inds <- mapply(
         FUN = function(inds, Hi) {inds - Hi},
         subsample.inds,
-        cumsum(c(0, Hvec[1:(length(Hvec) - 1)])),
+        cumsum(c(0, params$Hvec[1:(length(params$Hvec) - 1)])),
         SIMPLIFY = FALSE
       )
       subsamples <- mapply(
@@ -315,7 +395,7 @@ mopp.weights <- function(
     # the type 1 weights.
     # Note: division of w.sum_type_1 by n samples, to get the mean, cancels 
     # with multiplication by n samples in the mixture weights.
-    type_3.mix <- sweep(sweep(ll.array[subsample.absolute_inds,,,drop = FALSE], MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE), MARGIN = 3, STATS = log(q) - log(Hvec), FUN = "+", check.margin = FALSE)
+    type_3.mix <- sweep(sweep(ll.array[subsample.absolute_inds,,,drop = FALSE], MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE), MARGIN = 3, STATS = log(q) - log(params$Hvec), FUN = "+", check.margin = FALSE)
     type_3.mix <- lrowsums(type_3.mix, 3, drop. = TRUE)
     w.type_3 <- matrix(w.numerator[subsample.absolute_inds,,drop = FALSE] - type_3.mix, subsample_size, dim(w.numerator)[2])
     if (verbose) message("Done.")
@@ -343,12 +423,19 @@ mopp.weights <- function(
   if (type == 2) {
     if (keep.unnormalised) out$w.type_2 <- w.type_2
     out$wn.type_2 <- wn.type_2
+    out$Hvec <- params$Hvec
+    if (laplace.type_1) out$laplace.type_1.samples <- laplace.type_1.samples
+    if (laplace.type_2) out$laplace.type_2.samples <- laplace.type_2.samples
+    if (laplace.type_3) out$laplace.type_3.samples <- laplace.type_3.samples
   }
   if (type == 1 || keep.type1) {
     if (keep.unnormalised) out$w.type_1 <- w.type_1
     out$wn.type_1 <- wn.type_1
+    out$Hvec <- params$Hvec
+    if (laplace.type_1) out$laplace.type_1.samples <- laplace.type_1.samples
+    if (laplace.type_2) out$laplace.type_2.samples <- laplace.type_2.samples
+    if (laplace.type_3) out$laplace.type_3.samples <- laplace.type_3.samples
   }
-  out$Hvec <- Hvec
   if (return.loglik) out$loglik <- loglik
   
   if (par$new) parallel::stopCluster(par$par.clust)

@@ -144,7 +144,7 @@ mopp.weights <- function(
     } else if (subsample_size > H) {
       stop("subsample_size is too large!")
     } else if (subsample_size > min(sapply(theta, nrow))) {
-      warning("Using a subsample_size greater than the least number of samples from any partial posterior results in a biased estimator.")
+      warning("Using a subsample_size greater than the least number of samples from any partial posterior may result in a biased estimator.")
     }
   }
   # Dimension of the model.
@@ -227,7 +227,7 @@ mopp.weights <- function(
   norm <- mopp.normalise(
     w = w.type_1,
     type = 1,
-    just_compute_constant = type == 2 && !keep.type1,
+    just_compute_constant = type %in% 2:3 && !keep.type1,
     par.clust = par$par.clust,
     verbose = verbose
   )
@@ -270,7 +270,7 @@ mopp.weights <- function(
     kl_hat <- sapply(1:length(Hvec),
       FUN = function(j) {
         -sum(w.type_1[[j]]) / Hvec[j] +
-        lrowsums(w.type_1[[j]]) - log(Hvec[j])
+        w.sum_type_1[[j]] - log(Hvec[j])
       }
     )
     # Mixture component weights.
@@ -315,7 +315,7 @@ mopp.weights <- function(
     # the type 1 weights.
     # Note: division of w.sum_type_1 by n samples, to get the mean, cancels 
     # with multiplication by n samples in the mixture weights.
-    type_3.mix <- sweep(sweep(ll.array[subsample.absolute_inds,,,drop = FALSE], MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE), MARGIN = 3, STATS = log(Hvec) + log(q), FUN = "-", check.margin = FALSE)
+    type_3.mix <- sweep(sweep(ll.array[subsample.absolute_inds,,,drop = FALSE], MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE), MARGIN = 3, STATS = log(q) - log(Hvec), FUN = "+", check.margin = FALSE)
     type_3.mix <- lrowsums(type_3.mix, 3, drop. = TRUE)
     w.type_3 <- matrix(w.numerator[subsample.absolute_inds,,drop = FALSE] - type_3.mix, subsample_size, dim(w.numerator)[2])
     if (verbose) message("Done.")

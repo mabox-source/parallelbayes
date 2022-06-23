@@ -394,7 +394,7 @@ mopp.weights <- function(
     # Take subsample from theta.
     subsample.absolute_inds <- sample.int(ctx$H, size = subsample_size, prob = rep(q / params$Hvec, params$Hvec))
     split_inds <- findInterval(subsample.absolute_inds, cumsum(c(0, params$Hvec[1:(length(params$Hvec) - 1)])) + 1)
-    subsample.inds <- split(subsample.absolute_inds, split_inds)
+    subsample.inds <- split(subsample.absolute_inds, factor(split_inds, levels = 1:length(params$Hvec)))
     if (laplace.type_1) theta <- c(theta, list(laplace.type_1.samples))
     if (laplace.type_2) theta <- c(theta, list(laplace.type_2.samples))
     if (laplace.type_3) theta <- c(theta, list(laplace.type_3.samples))
@@ -684,7 +684,7 @@ mopp.kde <- function(
   theta <- abind::abind(theta, along = 1)
   if (!(type %in% c(0, 3))) {
     wn <- unlist(wn)
-  } else if (type == 3) {
+  } else if (type == 0) {
     wn <- matrix(-log(H), H, 1)
   }
   
@@ -789,7 +789,7 @@ mopp.mkde <- function(
   theta <- abind::abind(theta, along = 1)
   if (!(type %in% c(0, 3))) {
     wn <- unlist(wn)
-  } else if (type == 3) {
+  } else if (type == 0) {
     wn <- matrix(-log(H), H, 1)
   }
 

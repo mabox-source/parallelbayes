@@ -24,15 +24,16 @@ number of columns, which correspond to model parameters (including
 components of parameter vectors). Each list element corresponds to a single 
 partial posterior.}
 
-\item{wn}{a list of matrices, each containing normalised weights, one for 
-each sample in \code{theta} and obtained using the 
-\code{\link{mopp.weights}} function.}
+\item{wn}{a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+matrix (\code{type = 3}), each containing normalised weights, one for each 
+sample in \code{theta} and obtained using the \code{\link{mopp.weights}} 
+function.}
 
 \item{bw}{the smoothing bandwidth to be used. The kernels are scaled such 
 that this is the standard deviation of the (Gaussian) smoothing kernel.}
 
-\item{type}{an integer, either 0, 1 or 2, specifying the weighting type 
-used. Types 1 and 2 refer to the MoPP weighting algorithms (see 
+\item{type}{an integer, either 0, 1, 2 or 3, specifying the weighting type 
+used. Types 1, 2 and 3 refer to the MoPP weighting algorithms (see 
 \code{mopp.weights}). Type 0 can be used to use uniform weights, which 
 allows one to supply samples from another algorithm; in this case, \code{wn} 
 is not required.}

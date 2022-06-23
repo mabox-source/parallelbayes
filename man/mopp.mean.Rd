@@ -13,14 +13,15 @@ number of columns, which correspond to model parameters (including
 components of parameter vectors). Each list element corresponds to a single 
 partial posterior.}
 
-\item{wn}{a list of matrices, each containing normalised weights, one for 
-each sample in \code{theta} and obtained using the 
-\code{\link{mopp.weights}} function.}
+\item{wn}{a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+matrix (\code{type = 3}), each containing normalised weights, one for each 
+sample in \code{theta} and obtained using the \code{\link{mopp.weights}} 
+function.}
 
 \item{FUN}{a matrix-valued function that we wish to estimate the expected 
 value of. See details.}
 
-\item{type}{an integer, either 1 or 2, specifying the weighting type used.}
+\item{type}{an integer, either 1, 2 or 3, specifying the weighting type used.}
 
 \item{Hvec}{an optional vector specifying the number of samples taken from 
 each partial posterior.}
@@ -32,7 +33,7 @@ posterior expectation.
 \description{
 Compute a Monte Carlo estimate of the expectation of a function of model 
 parameters. Samples of the parameter vector are weighted using the MoPP type 
-1 or type 2 importance weights.
+1, 2 or 3 importance weights.
 }
 \details{
 \code{FUN} should take a matrix argument and return a matrix. The argument 

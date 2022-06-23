@@ -9,7 +9,16 @@ mopp.weights(
   theta,
   loglik = NULL,
   loglik.fun = NULL,
-  type = 2,
+  type = 1,
+  subsample_size = NULL,
+  laplace.type_1 = FALSE,
+  laplace.type_2 = FALSE,
+  laplace.type_3 = FALSE,
+  laplace.type_2.sample_size = NULL,
+  laplace.type_3.sample_size = NULL,
+  laplace.type_3.scale = NULL,
+  laplace.type_3.dof = NULL,
+  params = NULL,
   w.type_1 = NULL,
   keep.type1 = TRUE,
   keep.unnormalised = FALSE,
@@ -38,7 +47,12 @@ matrices, whose values are log likelihoods. See details.}
 \item{loglik.fun}{the log likelihood function. Optional if \code{loglik} is 
 supplied. See details.}
 
-\item{type}{an integer, either 1 or 2, specifying the weighting type to use.}
+\item{type}{an integer, either 1, 2 or 3, specifying the weighting type to 
+use.}
+
+\item{laplace.type_3.scale}{an optional matrix}
+
+\item{laplace.type_3.dof}{an optional numeric. Must be greater than the dimension of the model plus 1.}
 
 \item{w.type_1}{an optional list of single column matrices containing the 
 unnormalised MoPP type 1 weights, the same as the output field. Supply this 
@@ -46,8 +60,8 @@ to speed up computation of the type 2 weights if the type 1 weights have
 already been computated.}
 
 \item{keep.type1}{logical. If \code{TRUE} the type 1 weights are returned as 
-well as the type 2 weights when \code{type = 2}. This is faster than 
-computing the type 1 and type 2 weights separately.}
+well as the type 2/3 weights when \code{type = 2} or \code{type = 3}. This 
+is faster than computing the different weights separately.}
 
 \item{keep.unnormalised}{logical. If \code{TRUE} the unnormalised weights 
 are returned as well as the normalised.}
@@ -70,15 +84,23 @@ function. See details on \code{loglik.fun}.}
 A list containing fields:
 \item{Hvec}{A vector of the number of samples from each partial 
 posterior.}
-\item{wn.type_1 or wn.type_2}{The normalised weighted of type 1 or type 2, 
-depending on the value of \code{type}.}
+\item{wn.type_1, wn.type_2 or wn.type_3}{The normalised weighted of type 1, 
+2 or type 3, depending on the value of \code{type}.}
 \item{wn.type_1}{Additionally returned if \code{keep.type1} is \code{TRUE}.}
 \item{w.type_1}{The corresponding unnormalised weights, if 
-\code{keep.unnormalised} is \code{TRUE}}
+\code{keep.unnormalised} is \code{TRUE} and \code{type = 1}}
 \item{w.type_2}{The corresponding unnormalised weights, if 
-\code{keep.unnormalised} is \code{TRUE}}
+\code{keep.unnormalised} is \code{TRUE} and \code{type = 2}}
+\item{w.type_3}{The corresponding unnormalised weights, if 
+\code{keep.unnormalised} is \code{TRUE} and \code{type = 3}}
 \item{loglik}{log likelihoods, returned if \code{return.loglik} is 
 \code{TRUE}}
+\item{subsamples}{List of samples, like \code{theta}, after taking a 
+subsample in the \code{type = 3} algorithm}
+\item{subsample.inds}{List of sample indices indicating which were taken in 
+the subsample in the \code{type = 3} algorithm}
+\item{kl_hat}{Estimates of the KL divergence from the posterior distribution 
+to each of the partial posteriors. Only returned if \code{type = 3}}
 Weights and log likelihoods are returned as lists of matrices with 1 column 
 and rows corresponding to sample. The list elements correspond to partial 
 posterior (same as argument \code{theta}).
@@ -122,6 +144,21 @@ Parameter samples \code{theta} should be sampled from the partial posterior
 distributions using proper priors rather than the "fractionated" priors of 
 the consensus Monte Carlo algorithm of Scott et al 2016.
 }
+\section{Reusing output from \code{type == 1}}{
+
+
+Some of the computational steps are common to the three versions of the 
+algorithm. Therefore it can save computation to reuse the intermediate 
+results when calling with \code{type == 2} or \code{type == 3} after an 
+initial call with \code{type == 1}.
+
+If Laplace approximations were used in the initial run, the samples from 
+those approximations should be supplied in elements of \code{theta}, 
+appended after the samples from the partial posteriors. Arguments 
+\code{laplace.type_1}, \code{laplace.type_2} and \code{laplace.type_3} 
+should all be \code{FALSE}.
+}
+
 \section{References}{
 
 \itemize{

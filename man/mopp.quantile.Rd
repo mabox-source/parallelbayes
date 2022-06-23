@@ -24,14 +24,15 @@ partial posterior.}
 \item{prob}{a probability, in [0, 1], corresponding to the quantile of 
 \code{FUN} to be estimated.}
 
-\item{wn}{a list of matrices, each containing normalised weights, one for 
-each sample in \code{theta} and obtained using the 
-\code{\link{mopp.weights}} function.}
+\item{wn}{a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+matrix (\code{type = 3}), each containing normalised weights, one for each 
+sample in \code{theta} and obtained using the \code{\link{mopp.weights}} 
+function.}
 
 \item{FUN}{a matrix-valued function that we wish to estimate the expected 
 value of. See details.}
 
-\item{type}{an integer, either 1 or 2, specifying the weighting type used.}
+\item{type}{an integer, either 1, 2 or 3, specifying the weighting type used.}
 
 \item{tol}{a number specifying the tolerance level for convergence of 
 numerical root finding. See \code{\link{uniroot}} for details.}

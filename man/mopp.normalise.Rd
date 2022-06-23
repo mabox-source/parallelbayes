@@ -15,11 +15,11 @@ mopp.normalise(
 )
 }
 \arguments{
-\item{w}{either a single column matrix, if \code{type = 2}, or a list of 
-single column matrices, if \code{type = 1}, containing the unnormalised MoPP 
-weights on the log scale.}
+\item{w}{either a single column matrix, if \code{type = 2} or 
+\code{type = 3}, or a list of single column matrices, if \code{type = 1}, 
+containing the unnormalised MoPP weights on the log scale.}
 
-\item{type}{an integer, either 1 or 2, specifying the weighting type used.}
+\item{type}{an integer, either 1, 2 or 3, specifying the weighting type used.}
 
 \item{pp.inds}{integer vector, required for type 2 if \code{as.list} is 
 \code{TRUE} (default), with one element for each row of \code{w}: the index 
@@ -27,6 +27,9 @@ of the partial posterior the corresponding sample is from.}
 
 \item{just_compute_constant}{Logical. If \code{TRUE}, only the normalising 
 constant(s) will be computed and returned - not the normalised weights.}
+
+\item{as.list}{logical. If \code{TRUE} the normalised type 2 weights will be 
+returned as a list, split according to \code{pp.inds}.}
 
 \item{par.clust}{an optional cluster connection object from package 
 \code{parallel}.}
@@ -36,9 +39,10 @@ A list containing fields:
 \item{wn}{A list of single column matrices, if \code{type = 1}, containing 
 the normalised MoPP weights on the log scale. If \code{as.list} is 
 \code{FALSE} and \code{type} is 2, these will be returned as a single 
-matrix.}
-\item{w.sum}{Either a numeric, if \code{type = 2}, or a list of numerics, if 
-\code{type = 1}, reporting the normalising constants used (log scale).}
+matrix. If \code{type}, a single column matrix.}
+\item{w.sum}{Either a numeric, if \code{type = 2} or \code{type = 3}, or a 
+list of numerics, if \code{type = 1}, reporting the normalising constants 
+used (log scale).}
 }
 \description{
 Performs the self-normalisation of the importance weights in MoPP, necessary 

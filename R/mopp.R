@@ -293,9 +293,9 @@ mopp.weights <- function(
     H.nonlaplace <- sum(params$Hvec[1:params$n_shards])
     w.denominator <- matrix(ll.array[1:H.nonlaplace + (params$pp.inds[1:H.nonlaplace] - 1) * H.nonlaplace], H.nonlaplace, 1)
     # Weight denominator for Laplace samples.
-    if (laplace.type_1) w.denominator <- c(w.denominator, mvtnorm::dmvnorm(laplace.type_1.samples, params$laplace.type_1.mean, params$laplace.type_1.cov, log = TRUE))
-    if (laplace.type_2) w.denominator <- c(w.denominator, mvtnorm::dmvnorm(laplace.type_2.samples, params$laplace.type_2.mean, params$laplace.type_2.cov, log = TRUE))
-    if (laplace.type_3) w.denominator <- c(w.denominator, mvtnorm::dmvnorm(laplace.type_3.samples, params$laplace.type_3.mean, params$laplace.type_3.cov, log = TRUE))
+    if (laplace.type_1) w.denominator <- c(w.denominator, dmnorm(laplace.type_1.samples, params$laplace.type_1.mean, params$laplace.type_1.cov, log = TRUE))
+    if (laplace.type_2) w.denominator <- c(w.denominator, dmnorm(laplace.type_2.samples, params$laplace.type_2.mean, params$laplace.type_2.cov, log = TRUE))
+    if (laplace.type_3) w.denominator <- c(w.denominator, dmnorm(laplace.type_3.samples, params$laplace.type_3.mean, params$laplace.type_3.cov, log = TRUE))
   
     w.type_1 <- matrix(w.numerator - w.denominator, dim(w.numerator)[1], dim(w.numerator)[2])
     # Need the shard specific sums of type 1 weights for normalisation of 
@@ -811,7 +811,7 @@ mopp.mkde <- function(
     x.dist <- matrix(sweep(theta.rep[1:length(chunk.inds),,,drop = FALSE], MARGIN = c(1,3), STATS = x[chunk.inds,,drop = FALSE], FUN = "-", check.margin = FALSE), length(chunk.inds) * H, d)
     #x.dist <- t(BW.prec %*% t(matrix(sweep(theta.rep[1:length(chunk.inds),,,drop = FALSE], MARGIN = c(1,3), STATS = x[chunk.inds,,drop = FALSE], FUN = "-", check.margin = FALSE), length(chunk.inds) * H, d)))
     f <- sweep(
-      matrix(mvtnorm::dmvnorm(x.dist, sigma = BW, log = TRUE, checkSymmetry = FALSE), length(chunk.inds), H),
+      matrix(dmnorm(x.dist, sigma = BW, log = TRUE), length(chunk.inds), H),
       #matrix(mvtnorm::dmvnorm(x.dist, log = TRUE, checkSymmetry = FALSE), length(chunk.inds), H),
       MARGIN = 2,
       STATS = c(wn),

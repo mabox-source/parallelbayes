@@ -3,6 +3,7 @@
 export(consensus.bias_correction)
 export(consensus.weights)
 export(consensus.worker)
+export(dmnorm)
 export(dpe.master)
 export(logistic.sampler)
 export(lrowsums)

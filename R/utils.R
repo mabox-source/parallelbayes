@@ -279,3 +279,50 @@ parallel.start <- function(par.clust = NULL, ncores = 1) {
 
   return(list(par.clust = par.clust, valid = valid, new = new, ncores = ncores))
 }
+#' Multivariate normal density
+#'
+#' Probability density function for the multivariate normal distribution with 
+#' mean \code{mean} and covariance matrix \code{sigma}.
+#'
+#' Although this functionality already exists in package mvtnorm's 
+#' \code{\link[mvtnorm]{dmvnorm}}, that function was found to underflow in some 
+#' parameterisations, even with \code{log = TRUE}. This does not underflow in 
+#' those examples. This one might even be a bit faster.
+#'
+#' @seealso \code{\link[mvtnorm]{dmvnorm}}
+#'
+#' @param x vector or matrix of quantiles. If \code{x} is a matrix, each row is 
+#' taken to be a quantile.
+#' @param mean mean vector, default is \code{rep(0, length = ncol(x))}.
+#' @param sigma covariance matrix, default is ‘diag(ncol(x))’.
+#' @param log logical; if \code{TRUE}, densities \code{d} are given as 
+#' \code{log(d)}.
+#'
+#' @return A numeric vector containing the densities of \code{x} under the 
+#' specified multivariate normal distribution.
+#'
+#' @examples
+#' library(moppr)
+#' library(mvtnorm)
+#' # These parameters cause underflow with dmvnorm:
+#' m <- c(2.6, 6.3, -1.5, 1.6, 1, -0.8, 3.1, -1.6)
+#' S <- matrix(c(20.1, 4.8, 5.6, 1.4, -1.5, 1.1, -1.1, 0.6, 4.8, 11.4, -1.6, 3.1, 0.8, -1.6, -2.9, 0.1, 5.6, -1.6, 3.5, 0.1, 0.1, -0.7, 1.1, -0.4, 1.4, 3.1, 0.1, 5.5, 2, 0.2, -0.8, 1.2, -1.5, 0.8, 0.1, 2, 10.6, 0.8, -3.1, -0.4, 1.1, -1.6, -0.7, 0.2, 0.8, 7.2, 1.2, 0.9, -1.1, -2.9, 1.1, -0.8, -3.1, 1.2, 3.5, 2.4, 0.6, 0.1, -0.4, 1.2, -0.4, 0.9, 2.4, 6.4), nrow = 8, ncol = 8)
+#' dmvnorm(rep(0, 8), mean = m, sigma = S, log = TRUE)
+#'
+#' # The result should be:
+#' dmnorm(rep(0, 8), mean = m, sigma = S, log = TRUE)
+#'
+#' @export
+dmnorm <- function(
+  x,
+  mean = rep(0, ncol(x)),
+  sigma = diag(ncol(x)),
+  log = FALSE
+) {
+  if (class(x) != "matrix") x <- matrix(x, 1, length(x))
+  delta <- sweep(x, MARGIN = 2, STATS = mean, FUN = "-", check.margin = FALSE)
+  dens <- -1 / 2 * determinant(2 * pi * sigma, logarithm = TRUE)$modulus - 1 / 2 * .rowSums(delta * t(tcrossprod(solve(sigma), delta)), nrow(x), ncol(x))
+  if (!log) dens <- exp(dens)
+  attributes(dens) <- NULL
+  dens
+}

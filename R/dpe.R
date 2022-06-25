@@ -223,10 +223,10 @@ calc_weight <- function(theta, component.mean, bw, D, K, worker.mean, worker.cov
   if (use_sdpe) {
     theta.mean <- .rowMeans(theta, D, K)
     w.ndpe <- calc_ndpe_weight(theta, theta.mean, bw)
-    dens.mean <- mvtnorm::dmvnorm(theta.mean, consensus.mean, consensus.cov + bw ^ 2 / K * diag(D), log = TRUE)
+    dens.mean <- dmnorm(theta.mean, consensus.mean, consensus.cov + bw ^ 2 / K * diag(D), log = TRUE)
     denom <- 0
     for (k in 1:K) {
-      denom <- denom + mvtnorm::dmvnorm(theta[,k], worker.mean[[k]], worker.cov[[k]], log = TRUE)
+      denom <- denom + dmnorm(theta[,k], worker.mean[[k]], worker.cov[[k]], log = TRUE)
     }
     w.ndpe + dens.mean - denom
   } else {

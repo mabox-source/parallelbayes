@@ -118,11 +118,16 @@ consensus.weights <- function(
     # Check reciprocal condition number. If it suggests we cannot invert w, use 
     # the variances only as suggested by Scott et al 2016.
     if (rcond(w.pooled) <= cov.tol) {
-      w.pooled <- diag(diag(w.pooled))
+      w.pooled <- diag(1 / diag(w.pooled))
       cov_used.pooled <- FALSE
-    } else {cov_used.pooled <- TRUE}
-  } else {cov_used.pooled <- FALSE}
-  w.pooled <- solve(w.pooled)
+    } else {
+      cov_used.pooled <- TRUE
+      w.pooled <- solve(w.pooled)
+    }
+  } else {
+    cov_used.pooled <- FALSE
+    w.pooled <- solve(w.pooled)
+  }
 
   # Weight the samples.
 
@@ -248,8 +253,9 @@ consensus.worker <- function(df, context) {
     # Check reciprocal condition number. If it suggests we cannot invert v, 
     # ignore the covariances as suggest by Scott et al 2016.
     is_well_conditioned <- rcond(v) > context$tol
-    if (!is_well_conditioned) v <- diag(diag(v))
-    v <- solve(v)
+    if (!is_well_conditioned) {
+      v <- diag(1 / diag(v))
+    } else {v <- solve(v)}
 
   # Equal weighting.
   } else {

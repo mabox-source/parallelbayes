@@ -4,7 +4,13 @@
 \alias{dmnorm}
 \title{Multivariate normal density}
 \usage{
-dmnorm(x, mean = rep(0, ncol(x)), sigma = diag(ncol(x)), log = FALSE)
+dmnorm(
+  x,
+  mean = rep(0, ncol(x)),
+  sigma = diag(ncol(x)),
+  prec = NULL,
+  log = FALSE
+)
 }
 \arguments{
 \item{x}{vector or matrix of quantiles. If \code{x} is a matrix, each row is 
@@ -13,6 +19,8 @@ taken to be a quantile.}
 \item{mean}{mean vector, default is \code{rep(0, length = ncol(x))}.}
 
 \item{sigma}{covariance matrix, default is ‘diag(ncol(x))’.}
+
+\item{prec}{precision matrix, the matrix inverse of \code{sigma}. Optional.}
 
 \item{log}{logical; if \code{TRUE}, densities \code{d} are given as 
 \code{log(d)}.}
@@ -30,6 +38,11 @@ Although this functionality already exists in package mvtnorm's
 \code{\link[mvtnorm]{dmvnorm}}, that function was found to underflow in some 
 parameterisations, even with \code{log = TRUE}. This does not underflow in 
 those examples. This one might even be a bit faster.
+
+The precision matrix \code{prec} can be supplied as an argument as well as 
+the covariance matrix to avoid unnecessary computation when this is already 
+available. If not supplied it is computed from \code{sigma} using 
+\code{\link{solve}}.
 }
 \examples{
 library(moppr)

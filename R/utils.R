@@ -289,12 +289,18 @@ parallel.start <- function(par.clust = NULL, ncores = 1) {
 #' parameterisations, even with \code{log = TRUE}. This does not underflow in 
 #' those examples. This one might even be a bit faster.
 #'
+#' The precision matrix \code{prec} can be supplied as an argument as well as 
+#' the covariance matrix to avoid unnecessary computation when this is already 
+#' available. If not supplied it is computed from \code{sigma} using 
+#' \code{\link{solve}}.
+#'
 #' @seealso \code{\link[mvtnorm]{dmvnorm}}
 #'
 #' @param x vector or matrix of quantiles. If \code{x} is a matrix, each row is 
 #' taken to be a quantile.
 #' @param mean mean vector, default is \code{rep(0, length = ncol(x))}.
 #' @param sigma covariance matrix, default is ‘diag(ncol(x))’.
+#' @param prec precision matrix, the matrix inverse of \code{sigma}. Optional. 
 #' @param log logical; if \code{TRUE}, densities \code{d} are given as 
 #' \code{log(d)}.
 #'
@@ -317,11 +323,13 @@ dmnorm <- function(
   x,
   mean = rep(0, ncol(x)),
   sigma = diag(ncol(x)),
+  prec = NULL,
   log = FALSE
 ) {
   if (class(x) != "matrix") x <- matrix(x, 1, length(x))
+  if (is.null(prec)) prec <- solve(sigma)
   delta <- sweep(x, MARGIN = 2, STATS = mean, FUN = "-", check.margin = FALSE)
-  dens <- -1 / 2 * determinant(2 * pi * sigma, logarithm = TRUE)$modulus - 1 / 2 * .rowSums(delta * t(tcrossprod(solve(sigma), delta)), nrow(x), ncol(x))
+  dens <- -1 / 2 * determinant(2 * pi * sigma, logarithm = TRUE)$modulus - 1 / 2 * .rowSums(delta * t(tcrossprod(prec, delta)), nrow(x), ncol(x))
   if (!log) dens <- exp(dens)
   attributes(dens) <- NULL
   dens

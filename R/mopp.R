@@ -195,14 +195,16 @@ mopp.weights <- function(
   # Sample from Laplace approximations.
 # HVE NOT YET WORKED OUT HOW THIS WORKS WITH SPARK.
   if (laplace.type_1) {
-    laplace.type_1.samples <- consensus.weights(
+    con.out <- consensus.weights(
       theta,
       type = 2,
       return.pooled = TRUE,
       par.clust = par$par.clust,
-    )$theta.w.pooled
+    )
+    laplace.type_1.samples <- con.out$theta.w.pooled
     params$laplace.type_1.mean <- colMeans(laplace.type_1.samples)
-    params$laplace.type_1.cov <- crossprod(sweep(laplace.type_1.samples, MARGIN = 2, STATS = params$laplace.type_1.mean, FUN = "-", check.margin = FALSE)) / (nrow(laplace.type_1.samples) - 1)
+    params$laplace.type_1.cov <- con.out$w.pooled
+    rm(con.out)
     ctx$theta <- rbind(ctx$theta, laplace.type_1.samples)
     ctx$H <- ctx$H + nrow(laplace.type_1.samples)
     params$pp.inds <- c(params$pp.inds, rep(max(params$pp.inds) + 1, nrow(laplace.type_1.samples)))

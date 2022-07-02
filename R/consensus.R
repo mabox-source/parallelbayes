@@ -56,7 +56,10 @@
 #' ignored. See details.
 #'
 #' @return  A list containing fields:
-#' \item{w}{A list of weighting matrices used.}
+#' \item{w}{A list of weighting matrices used (covariance matrices if 
+#' \code{type = 2}.}
+#' \item{w.pooled}{The pooled weighting matrix (covariance matrix if 
+#' \code{type = 2}.}
 #' \item{cov_used.partial}{Diagnostics (see Details).}
 #' \item{cov_used.pooled}{Diagnostics (see Details).}
 #' \item{theta.w.pooled}{A matrix of pooled, weighted samples if 
@@ -192,6 +195,7 @@ consensus.weights <- function(
 
   out <- list(
     w = w,
+    w.pooled = w.pooled,
     cov_used.partial = cov_used.partial,
     cov_used.pooled = cov_used.pooled
   )

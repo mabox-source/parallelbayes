@@ -1,7 +1,7 @@
 Package: moppr
 Title: Posterior inference using a mixture of partial posteriors
-Version: 0.3.1
-Date: 2022-04-22
+Version: 0.3.2
+Date: 2022-07-03
 Authors@R: person("Marc", "Box", email = "marc.box@protonmail.com", role = c("aut", "cre"))
 Description: Implementation of the MoPP algorithm with examples. MoPP 
     facilitates sample-based Bayesian inference when data are partitioned and 

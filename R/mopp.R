@@ -86,6 +86,9 @@
 #' \code{loglik} argument, with elements as matrices.
 #' @param par.clust an optional cluster connection object from package 
 #' \code{parallel}. Ignored if \code{x} is a Spark table.
+#' @param forking logical. If \code{TRUE}, use forking functions 
+#' \code{\link[parallel]{mclapply}}, \code{\link[parallel]{mcmapply}}. Does not 
+#' work on Windows.
 #' @param ncores an optional integer specifying the number of CPU cores to use 
 #' (see \code{\link[parallel]{makeCluster}}). The default, 1, signifies that 
 #' \code{parallel} will not be used.
@@ -137,6 +140,7 @@ mopp.weights <- function(
   keep.unnormalised = FALSE,
   return.loglik = FALSE,
   par.clust = NULL,
+  forking = FALSE,
   ncores = 1,
   verbose = FALSE,
   ...
@@ -155,7 +159,7 @@ mopp.weights <- function(
     if (!("list" %in% class(x))) stop("x must be a Spark table or a list!")
     use_spark <- FALSE
   }
-  if (!use_spark) par <- parallel.start(par.clust, ncores) 
+  if (!use_spark) par <- parallel.start(par.clust, ncores, forking) 
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
   if (is.null(params)) {
     params <- list(
@@ -168,7 +172,11 @@ mopp.weights <- function(
     # Record which partial posterior each sample came from.
     params$pp.inds <- rep(1:length(params$Hvec), params$Hvec)
   }
-  params$use_parallel <- par$valid
+  if (!forking) {
+    params$use_parallel <- par$valid
+  } else {
+    params$use_parallel <- FALSE
+  }
   # Parameter list for workers.
   ctx <- list(
     theta = do.call(rbind, theta),
@@ -200,6 +208,8 @@ mopp.weights <- function(
       type = 2,
       return.pooled = TRUE,
       par.clust = par$par.clust,
+      forking = forking,
+      ncores = ncores
     )
     laplace.type_1.samples <- con.out$theta.w.pooled
     params$laplace.type_1.mean <- colMeans(laplace.type_1.samples)
@@ -270,6 +280,8 @@ mopp.weights <- function(
       loglik <- lapply(loglik, as.matrix)
     } else if (params$use_parallel) {
       loglik <- parallel::parLapply(par$par.clust, x, likelihood.worker, context = ctx)
+    } else if (forking) {
+      loglik <- parallel::mclapply(x, FUN = likelihood.worker, context = ctx, mc.cores = ncores)
     } else {
       loglik <- lapply(x, likelihood.worker, ctx)
     }
@@ -315,6 +327,7 @@ mopp.weights <- function(
     type = 1,
     just_compute_constant = type %in% 2:3 && !keep.type1,
     par.clust = par$par.clust,
+    forking = forking,
     verbose = verbose
   )
   w.sum_type_1 <- norm$w.sum
@@ -340,6 +353,7 @@ mopp.weights <- function(
       pp.inds = params$pp.inds,
       just_compute_constant = FALSE,
       par.clust = par$par.clust,
+      forking = forking,
       verbose = verbose
     )
     wn.type_2 <- norm$wn
@@ -400,20 +414,35 @@ mopp.weights <- function(
     if (laplace.type_1) theta <- c(theta, list(laplace.type_1.samples))
     if (laplace.type_2) theta <- c(theta, list(laplace.type_2.samples))
     if (laplace.type_3) theta <- c(theta, list(laplace.type_3.samples))
-    if (!is.null(par.clust)) {
+    if (params$use_parallel) {
       subsample.inds <- parallel::clusterMap(
-        par.clust,
+        par$par.clust,
         fun = function(inds, Hi) {inds - Hi},
         subsample.inds,
         cumsum(c(0, params$Hvec[1:(length(params$Hvec) - 1)])),
         SIMPLIFY = FALSE
       )
       subsamples <- parallel::clusterMap(
-        par.clust,
+        par$par.clust,
         fun = function(th, inds) {th[inds,,drop = FALSE]},
         theta,
         subsample.inds,
         SIMPLIFY = FALSE
+      )
+    } else if (forking) {
+      subsample.inds <- parallel::mcmapply(
+        FUN = function(inds, Hi) {inds - Hi},
+        subsample.inds,
+        cumsum(c(0, params$Hvec[1:(length(params$Hvec) - 1)])),
+        SIMPLIFY = FALSE,
+        mc.cores = ncores
+      )
+      subsamples <- parallel::mcmapply(
+        FUN = function(th, inds) {th[inds,,drop = FALSE]},
+        theta,
+        subsample.inds,
+        SIMPLIFY = FALSE,
+        mc.cores = ncores
       )
     } else {
       subsample.inds <- mapply(
@@ -445,6 +474,7 @@ mopp.weights <- function(
       type = 3,
       just_compute_constant = FALSE,
       par.clust = par$par.clust,
+      forking = forking,
       verbose = verbose
     )
     wn.type_3 <- norm$wn
@@ -959,6 +989,12 @@ mopp.quantile <- function(
 #' returned as a list, split according to \code{pp.inds}.
 #' @param par.clust an optional cluster connection object from package 
 #' \code{parallel}.
+#' @param forking logical. If \code{TRUE}, use forking functions 
+#' \code{\link[parallel]{mclapply}}, \code{\link[parallel]{mcmapply}}. Does not 
+#' work on Windows.
+#' @param ncores an optional integer specifying the number of CPU cores to use 
+#' (see \code{\link[parallel]{makeCluster}}). The default, 1, signifies that 
+#' \code{parallel} will not be used.
 #' @return A list containing fields:
 #' \item{wn}{A list of single column matrices, if \code{type = 1}, containing 
 #' the normalised MoPP weights on the log scale. If \code{as.list} is 
@@ -976,12 +1012,16 @@ mopp.normalise <- function(
   just_compute_constant = FALSE,
   as.list = TRUE,
   par.clust = NULL,
+  forking = FALSE,
+  ncores = 1,
   verbose = FALSE
 ) {
   if (type == 1) {
     if (verbose) message("Computing type 1 weights' normalising constants...")
     if (!is.null(par.clust)) {
       w.sum <- parallel::parLapply(par.clust, w, fun = function(ww) {lrowsums(ww, 1)})
+    } else if (forking) {
+      w.sum <- parallel::mclapply(w, FUN = function(ww) {lrowsums(ww, 1)}, mc.cores = ncores)
     } else {
       w.sum <- lapply(w, FUN = function(ww) {lrowsums(ww, 1)})
     }
@@ -999,6 +1039,14 @@ mopp.normalise <- function(
             w,
             w.sum,
             SIMPLIFY = FALSE
+          )
+      } else if (forking) {
+        wn <- parallel::mcmapply(
+            FUN = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)},
+            w,
+            w.sum,
+            SIMPLIFY = FALSE,
+            mc.cores = ncores
           )
       } else {
         wn <- mapply(FUN = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)}, w, w.sum, SIMPLIFY = FALSE)

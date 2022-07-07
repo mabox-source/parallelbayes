@@ -24,6 +24,7 @@ mopp.weights(
   keep.unnormalised = FALSE,
   return.loglik = FALSE,
   par.clust = NULL,
+  forking = FALSE,
   ncores = 1,
   verbose = FALSE,
   ...
@@ -72,6 +73,10 @@ returned as an element of the output list. The format is the same as the
 
 \item{par.clust}{an optional cluster connection object from package 
 \code{parallel}. Ignored if \code{x} is a Spark table.}
+
+\item{forking}{logical. If \code{TRUE}, use forking functions 
+\code{\link[parallel]{mclapply}}, \code{\link[parallel]{mcmapply}}. Does not 
+work on Windows.}
 
 \item{ncores}{an optional integer specifying the number of CPU cores to use 
 (see \code{\link[parallel]{makeCluster}}). The default, 1, signifies that 

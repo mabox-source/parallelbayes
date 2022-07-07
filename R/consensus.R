@@ -48,6 +48,9 @@
 #' \code{FALSE}.
 #' @param par.clust an optional cluster connection object from package 
 #' \code{parallel}. Ignored if \code{theta} is a Spark table.
+#' @param forking logical. If \code{TRUE}, use forking functions 
+#' \code{\link[parallel]{mclapply}}, \code{\link[parallel]{mcmapply}}. Does not 
+#' work on Windows.
 #' @param ncores an optional integer specifying the number of CPU cores to use 
 #' (see \code{\link[parallel]{makeCluster}}). The default, 1, signifies that 
 #' \code{parallel} will not be used.
@@ -75,6 +78,7 @@ consensus.weights <- function(
   correct.bias = FALSE,
   alpha = 0.2,
   par.clust = NULL,
+  forking = FALSE,
   ncores = 1,
   cov.tol = .Machine$double.eps
 ) {
@@ -90,7 +94,7 @@ consensus.weights <- function(
     use_spark <- FALSE
   }
   if (any(Hvec != Hvec[1])) stop("Each set of samples must have the same number of realisations!")
-  if (!use_spark) par <- parallel.start(par.clust, ncores) 
+  if (!use_spark) par <- parallel.start(par.clust, ncores, forking) 
 
   # First derive weights.
 
@@ -107,6 +111,9 @@ consensus.weights <- function(
     w <- split(local.res[,2], local.res[,1])
   } else if (par$valid) {
     w <- parallel::parLapply(par.clust, theta, consensus.worker, context = ctx)
+    if (any(sapply(w, function(wi) {is.na(wi[,1])}))) stop("Insufficient useable samples!")
+  } else if (forking) {
+    w <- parallel::mclapply(theta, FUN = consensus.worker, context = ctx, mc.cores = ncores)
     if (any(sapply(w, function(wi) {is.na(wi[,1])}))) stop("Insufficient useable samples!")
   } else {
     w <- lapply(theta, consensus.worker, ctx)

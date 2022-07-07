@@ -228,7 +228,7 @@ logistic.sampler <- function(
     } else {
       full_cond.mean <- full_cond.cov %*% (full_cond.mean_part - crossprod(x, aug * offset) + prior_prec %*% params$mu)
     }
-    samples$coefs[h,] <- MASS::mvrnorm(1, full_cond.mean, full_cond.cov)
+    samples$theta[h,] <- MASS::mvrnorm(1, full_cond.mean, full_cond.cov)
 
     setTxtProgressBar(pb, (h - 1) / (H - 1))
   }
@@ -248,6 +248,9 @@ logistic.sampler <- function(
 #' \code{parallel}.
 #' @param ncores an optional integer specifying the number of CPU cores to use 
 #' (see \code{\link[parallel]{makeCluster}}).
+#' @param forking logical. If \code{TRUE}, forking functions 
+#' \code{\link[parallel]{mclapply}}, \code{\link[parallel]{mcmapply}} will be 
+#' used and no connection object will be defined.
 #'
 #' @return A list containing fields:
 #' \item{par.clust}{Cluster connection object from package \code{parallel}.}
@@ -257,11 +260,11 @@ logistic.sampler <- function(
 #' \item{ncores}{Integer. The number of cores used by \code{par.clust}.}
 #'
 #' @export
-parallel.start <- function(par.clust = NULL, ncores = 1) {
+parallel.start <- function(par.clust = NULL, ncores = 1, forking = FALSE) {
   if (!is.null(par.clust) && class(par.clust)[1] == "SOCKcluster" && require(parallel)) {
     valid <- TRUE
     new <- FALSE
-  } else if (is.null(par.clust) && ncores > 1 && require(parallel)) {
+  } else if (is.null(par.clust) && !forking && ncores > 1 && require(parallel)) {
     new <- TRUE
     n_cores_available <- parallel::detectCores()
     if (ncores > n_cores_available) {
@@ -271,7 +274,7 @@ parallel.start <- function(par.clust = NULL, ncores = 1) {
     par.clust <- parallel::makeCluster(ncores)
     valid <- TRUE
   } else {
-    if (ncores > 1) message("Package parallel not found, using ncores = 1.")
+    if (!forking && ncores > 1) message("Package parallel not found, using ncores = 1.")
     par.clust <- NULL
     valid <- FALSE
     new <- FALSE

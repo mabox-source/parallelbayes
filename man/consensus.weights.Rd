@@ -11,6 +11,7 @@ consensus.weights(
   correct.bias = FALSE,
   alpha = 0.2,
   par.clust = NULL,
+  forking = FALSE,
   ncores = 1,
   cov.tol = .Machine$double.eps
 )
@@ -42,6 +43,10 @@ the bias estimation. Default is 0.2; ignored if \code{correct.bias} is
 
 \item{par.clust}{an optional cluster connection object from package 
 \code{parallel}. Ignored if \code{theta} is a Spark table.}
+
+\item{forking}{logical. If \code{TRUE}, use forking functions 
+\code{\link[parallel]{mclapply}}, \code{\link[parallel]{mcmapply}}. Does not 
+work on Windows.}
 
 \item{ncores}{an optional integer specifying the number of CPU cores to use 
 (see \code{\link[parallel]{makeCluster}}). The default, 1, signifies that 

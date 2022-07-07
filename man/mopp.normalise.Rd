@@ -11,6 +11,8 @@ mopp.normalise(
   just_compute_constant = FALSE,
   as.list = TRUE,
   par.clust = NULL,
+  forking = FALSE,
+  ncores = 1,
   verbose = FALSE
 )
 }
@@ -33,6 +35,14 @@ returned as a list, split according to \code{pp.inds}.}
 
 \item{par.clust}{an optional cluster connection object from package 
 \code{parallel}.}
+
+\item{forking}{logical. If \code{TRUE}, use forking functions 
+\code{\link[parallel]{mclapply}}, \code{\link[parallel]{mcmapply}}. Does not 
+work on Windows.}
+
+\item{ncores}{an optional integer specifying the number of CPU cores to use 
+(see \code{\link[parallel]{makeCluster}}). The default, 1, signifies that 
+\code{parallel} will not be used.}
 }
 \value{
 A list containing fields:

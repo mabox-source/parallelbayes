@@ -4,7 +4,7 @@
 \alias{parallel.start}
 \title{Verify an existing or initialise a new parallel cluster}
 \usage{
-parallel.start(par.clust = NULL, ncores = 1)
+parallel.start(par.clust = NULL, ncores = 1, forking = FALSE)
 }
 \arguments{
 \item{par.clust}{an optional cluster connection object from package 
@@ -12,6 +12,10 @@ parallel.start(par.clust = NULL, ncores = 1)
 
 \item{ncores}{an optional integer specifying the number of CPU cores to use 
 (see \code{\link[parallel]{makeCluster}}).}
+
+\item{forking}{logical. If \code{TRUE}, forking functions 
+\code{\link[parallel]{mclapply}}, \code{\link[parallel]{mcmapply}} will be 
+used and no connection object will be defined.}
 }
 \value{
 A list containing fields:

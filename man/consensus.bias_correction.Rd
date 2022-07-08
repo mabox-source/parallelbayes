@@ -11,6 +11,7 @@ consensus.bias_correction(
   type = 2,
   return.pooled = FALSE,
   par.clust = NULL,
+  forking = FALSE,
   ncores = 1,
   cov.tol = .Machine$double.eps
 )

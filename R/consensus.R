@@ -194,6 +194,7 @@ consensus.weights <- function(
         type = type,
         return.pooled = TRUE,
         par.clust = par.clust,
+        forking = forking,
         ncores = ncores,
         cov.tol = cov.tol
       )$theta.w.pooled
@@ -312,6 +313,7 @@ consensus.bias_correction <- function(
   type = 2,
   return.pooled = FALSE,
   par.clust = NULL,
+  forking = FALSE,
   ncores = 1,
   cov.tol = .Machine$double.eps
 ) {
@@ -321,6 +323,7 @@ consensus.bias_correction <- function(
     type = type,
     return.pooled = TRUE,
     par.clust = par.clust,
+    forking = forking,
     ncores = ncores,
     cov.tol = cov.tol
   )$theta.w.pooled

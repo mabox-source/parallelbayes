@@ -215,29 +215,16 @@ mopp.weights <- function(
     params$laplace.type_1.mean <- colMeans(laplace.type_1.samples)
     params$laplace.type_1.cov <- con.out$w.pooled
     rm(con.out)
-    ctx$theta <- rbind(ctx$theta, laplace.type_1.samples)
-    ctx$H <- ctx$H + nrow(laplace.type_1.samples)
-    params$pp.inds <- c(params$pp.inds, rep(max(params$pp.inds) + 1, nrow(laplace.type_1.samples)))
-    params$Hvec <- c(params$Hvec, nrow(laplace.type_1.samples))
-    # Records that Laplace type 1 was done.
-    params$laplace.type_1 <- TRUE
   } else {
     laplace.type_1.samples <- matrix(NA, 0, params$d)
     if (is.null(params$laplace.type_1)) params$laplace.type_1 <- FALSE
   }
-  if (laplace.type_2 || laplace.type_3) theta.pooled <- abind::abind(theta, along = 1)
   if (laplace.type_2) {
-    params$laplace.type_2.mean <- colMeans(theta.pooled)
+    params$laplace.type_2.mean <- colMeans(ctx$theta)
     # Sample covariance matrix.
-    params$laplace.type_2.cov <- crossprod(sweep(theta.pooled, MARGIN = 2, STATS = params$laplace.type_2.mean, FUN = "-", check.margin = FALSE)) / (nrow(theta.pooled) - 1)
+    params$laplace.type_2.cov <- crossprod(sweep(ctx$theta, MARGIN = 2, STATS = params$laplace.type_2.mean, FUN = "-", check.margin = FALSE)) / (ctx$H - 1)
     # Sample from multivariate normal distribution.
     laplace.type_2.samples <- MASS::mvrnorm(laplace.type_2.sample_size, params$laplace.type_2.mean, params$laplace.type_2.cov)
-    ctx$theta <- rbind(ctx$theta, laplace.type_2.samples)
-    ctx$H <- ctx$H + laplace.type_2.sample_size
-    params$pp.inds <- c(params$pp.inds, rep(max(params$pp.inds) + 1, laplace.type_2.sample_size))
-    params$Hvec <- c(params$Hvec, laplace.type_2.sample_size)
-    # Records that Laplace type 2 was done.
-    params$laplace.type_2 <- TRUE
   } else {
     laplace.type_2.samples <- matrix(NA, 0, params$d)
     if (is.null(params$laplace.type_2)) params$laplace.type_2 <- FALSE
@@ -245,22 +232,39 @@ mopp.weights <- function(
   if (laplace.type_3) {
     if (is.null(laplace.type_3.scale)) laplace.type_3.scale <- matrix(2.5 ^ 2, params$d, params$d)
     if (is.null(laplace.type_3.dof)) laplace.type_3.dof <- params$d + 2
-    params$laplace.type_3.mean <- colMeans(theta.pooled)
+    params$laplace.type_3.mean <- colMeans(ctx$theta)
     S <- crossprod(abind::abind(lapply(theta, FUN = function(th) {sweep(th, MARGIN = 2, STATS = colMeans(th), FUN = "-", check.margin = FALSE)}), along = 1))
     # Sample from multivariate normal distribution.
-    params$laplace.type_3.cov <- (S + laplace.type_3.scale) / (nrow(theta.pooled) + laplace.type_3.dof - params$d - 1)
+    params$laplace.type_3.cov <- (S + laplace.type_3.scale) / (nrow(ctx$theta) + laplace.type_3.dof - params$d - 1)
     laplace.type_3.samples <- MASS::mvrnorm(laplace.type_3.sample_size, params$laplace.type_3.mean, params$laplace.type_3.cov)
-    ctx$theta <- rbind(ctx$theta, laplace.type_3.samples)
-    ctx$H <- ctx$H + laplace.type_3.sample_size
-    params$pp.inds <- c(params$pp.inds, rep(max(params$pp.inds) + 1, laplace.type_3.sample_size))
-    params$Hvec <- c(params$Hvec, laplace.type_3.sample_size)
-    # Records that Laplace type 3 was done.
-    params$laplace.type_3 <- TRUE
   } else {
     laplace.type_3.samples <- matrix(NA, 0, params$d)
     if (is.null(params$laplace.type_3)) params$laplace.type_3 <- FALSE
   }
-  if (laplace.type_2 || laplace.type_3) rm(theta.pooled)
+  if (laplace.type_1) {
+    ctx$theta <- rbind(ctx$theta, laplace.type_1.samples)
+    ctx$H <- ctx$H + nrow(laplace.type_1.samples)
+    params$pp.inds <- c(params$pp.inds, rep(ifelse(length(params$pp.inds) > 0, max(params$pp.inds) + 1, 1), nrow(laplace.type_1.samples)))
+    params$Hvec <- c(params$Hvec, nrow(laplace.type_1.samples))
+    # Records that Laplace type 1 was done.
+    params$laplace.type_1 <- TRUE
+  }
+  if (laplace.type_2) {
+    ctx$theta <- rbind(ctx$theta, laplace.type_2.samples)
+    ctx$H <- ctx$H + laplace.type_2.sample_size
+    params$pp.inds <- c(params$pp.inds, rep(ifelse(length(params$pp.inds) > 0, max(params$pp.inds) + 1, 1), laplace.type_2.sample_size))
+    params$Hvec <- c(params$Hvec, laplace.type_2.sample_size)
+    # Records that Laplace type 2 was done.
+    params$laplace.type_2 <- TRUE
+  }
+  if (laplace.type_3) {
+    ctx$theta <- rbind(ctx$theta, laplace.type_3.samples)
+    ctx$H <- ctx$H + laplace.type_3.sample_size
+    params$pp.inds <- c(params$pp.inds, rep(ifelse(length(params$pp.inds) > 0, max(params$pp.inds) + 1, 1), laplace.type_3.sample_size))
+    params$Hvec <- c(params$Hvec, laplace.type_3.sample_size)
+    # Records that Laplace type 3 was done.
+    params$laplace.type_3 <- TRUE
+  }
   
   
   ##############################################################################
@@ -295,7 +299,8 @@ mopp.weights <- function(
   
   # Multiply likelihoods.
   if (verbose) message("Computing unnormalised posterior densities...")
-  w.numerator <- rowSums(ll.array, dims = 2)
+  # Only samples from the partial posteriors - NOT laplace samples.
+  w.numerator <- rowSums(ll.array[,,1:params$n_shards,drop = FALSE], dims = 2)
   if (verbose) message("Done.")
   
   # Type 1 weights: divide out likelihood from partial posterior of origin; call 

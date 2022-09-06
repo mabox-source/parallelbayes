@@ -130,6 +130,7 @@ mopp.weights <- function(
   laplace.type_1 = FALSE,
   laplace.type_2 = FALSE,
   laplace.type_3 = FALSE,
+  laplace.type_1.sample_size = NULL,
   laplace.type_2.sample_size = NULL,
   laplace.type_3.sample_size = NULL,
   laplace.type_3.scale = NULL,
@@ -186,6 +187,10 @@ mopp.weights <- function(
     args = list(...)
   )
   if (any(params$Hvec < 1)) stop("Insufficient useable samples!")
+  # The first min(params$Hvec) Laplace type 1 samples are by the consensus 
+  # Monte Carlo algorithm. Any above that will be sampled from the normal 
+  # distribution implied by the consensus Monte Carlo algorithm.
+  if (laplace.type_1 && is.null(laplace.type_1.sample_size)) laplace.type_1.sample_size <- min(params$Hvec)
   if (laplace.type_2 && is.null(laplace.type_2.sample_size)) laplace.type_2.sample_size <- max(params$Hvec)
   if (laplace.type_3 && is.null(laplace.type_3.sample_size)) laplace.type_3.sample_size <- max(params$Hvec)
   if (type == 3) {
@@ -203,6 +208,7 @@ mopp.weights <- function(
   # Sample from Laplace approximations.
 # HVE NOT YET WORKED OUT HOW THIS WORKS WITH SPARK.
   if (laplace.type_1) {
+    # First set of samples: those from (weighted) consensus Monte Carlo.
     con.out <- consensus.weights(
       theta,
       type = 2,
@@ -214,6 +220,10 @@ mopp.weights <- function(
     laplace.type_1.samples <- con.out$theta.w.pooled
     params$laplace.type_1.mean <- colMeans(laplace.type_1.samples)
     params$laplace.type_1.cov <- con.out$w.pooled
+    # More samples required? Sample from implied normal distribution.
+    if (laplace.type_1.sample_size > nrow(con.out$theta.w.pooled)) {
+      laplace.type_1.samples <- rbind(laplace.type_1.samples, MASS::mvrnorm(laplace.type_1.sample_size, params$laplace.type_1.mean, params$laplace.type_1.cov))
+    }
     rm(con.out)
   } else {
     laplace.type_1.samples <- matrix(NA, 0, params$d)

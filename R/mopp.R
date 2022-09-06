@@ -709,11 +709,12 @@ mopp.kde <- function(
   } else if (length(Hvec) != length(theta)) {
     stop("There should be one element of Hvec for each element of theta!")
   }
+  H <- as.numeric(sum(Hvec))
   
   # In type 1 we need to add the mixture distribution weights (these are already 
   # implicit in the type 2 weight definition).
   if (type == 1) {
-    l_mixture_weight <- log(Hvec) - log(sum(Hvec))
+    l_mixture_weight <- log(Hvec) - log(H)
     wn <- mapply(FUN = function(wi, m) {wi + m}, wn, l_mixture_weight, SIMPLIFY = FALSE)
   }
   
@@ -728,7 +729,7 @@ mopp.kde <- function(
   n <- length(x)
   y <- rep(-Inf, n)
   buffer <- 1.5
-  mem.req <- (n + sum(Hvec) * n) * 8 * buffer
+  mem.req <- (n + H * n) * 8 * buffer
   n_chunks <- min(ceiling(mem.req / mem.limit), n)
   nk <- ceiling(n / n_chunks)
   for (k in 1:n_chunks) {

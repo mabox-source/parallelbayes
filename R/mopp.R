@@ -351,15 +351,16 @@ mopp.weights <- function(
   # Type 2 weights.
   if (type == 2) {
     if (verbose) message("Computing type 2 weights...")
+    # Mixture component weights.
+    q <- params$Hvec / ctx$H
     # Want this as a matrix for type 2 calculations.
     w.sum_type_1 <- abind::abind(w.sum_type_1, along = 2)
     # Need to weight each partial posterior density in ll.array by the mean of 
-    # the type 1 weights.
-    # Note: division of w.sum_type_1 by n samples, to get the mean, cancels 
-    # with multiplication by n samples in the mixture weights.
-    type_2.mix <- sweep(ll.array, MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE) - log(ctx$H)
+    # the type 1 weights, and the component weights.
+    type_2.mix <- sweep(sweep(ll.array, MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE), MARGIN = 3, STATS = log(q) - log(params$Hvec), FUN = "+", check.margin = FALSE)
+    #type_2.mix <- sweep(ll.array, MARGIN = 2:3, STATS = w.mean_type_1, FUN = "+", check.margin = FALSE) - log(ctx$H)
     type_2.mix <- lrowsums(type_2.mix, 3, drop. = TRUE)
-    w.type_2 <- matrix(w.numerator - type_2.mix, dim(w.numerator)[1], dim(w.numerator)[2])
+    w.type_2 <- matrix(w.numerator - type_2.mix, dim(w.numerator)[1], dim(w.numerator)[2]) - log(ctx$H)
     if (verbose) message("Done.")
   
     norm <- mopp.normalise(
@@ -477,8 +478,6 @@ mopp.weights <- function(
     w.sum_type_1 <- abind::abind(w.sum_type_1, along = 2)
     # Need to weight each partial posterior density in ll.array by the mean of 
     # the type 1 weights.
-    # Note: division of w.sum_type_1 by n samples, to get the mean, cancels 
-    # with multiplication by n samples in the mixture weights.
     type_3.mix <- sweep(sweep(ll.array[subsample.absolute_inds,,,drop = FALSE], MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE), MARGIN = 3, STATS = log(q) - log(params$Hvec), FUN = "+", check.margin = FALSE)
     type_3.mix <- lrowsums(type_3.mix, 3, drop. = TRUE)
     w.type_3 <- matrix(w.numerator[subsample.absolute_inds,,drop = FALSE] - type_3.mix, subsample_size, dim(w.numerator)[2])

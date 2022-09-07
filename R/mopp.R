@@ -732,7 +732,7 @@ mopp.kde <- function(
   if (!(type %in% c(0, 3))) {
     wn <- unlist(wn)
   } else if (type == 0) {
-    wn <- matrix(-log(H), H, 1)
+    wn <- rep(-log(H), H)
   }
   
   n <- length(x)

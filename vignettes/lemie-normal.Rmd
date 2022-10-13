@@ -1,11 +1,11 @@
 ---
-title: "MoPP Examples with Normal Data"
+title: "LEMIE Examples with Normal Data"
 author: "Marc Box"
 date: "`r Sys.Date()`"
 output: rmarkdown::html_vignette
 bibliography: "references.bib"
 vignette: >
-  %\VignetteIndexEntry{MoPP Examples with Normal Data}
+  %\VignetteIndexEntry{LEMIE Examples with Normal Data}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -17,7 +17,7 @@ knitr::opts_chunk$set(
 )
 ```
 
-# MoPP Examples with Normal Data
+# LEMIE Examples with Normal Data
 
 There are two models to consider: one where data are uncorrelated (the 
 off-diagonal elements of the covariance matrix are zero) and one where the data 
@@ -172,7 +172,7 @@ samples.part <- lapply(samples.part, FUN = as.matrix)
 
 ### Pooling algorithms
 
-Here we define the log likelihood function, to be used by MoPP. This is 
+Here we define the log likelihood function, to be used by LEMIE. This is 
 specific to the model with $\Sigma$ known.
 
 ```{r}
@@ -186,11 +186,11 @@ loglik.fun <- function(theta, x, Sigma, d) {
 }
 ```
 
-MoPP.
+LEMIE.
 
 ```{r}
 timer <- proc.time()
-mopp.out <- mopp.weights(
+lemie.out <- lemie.weights(
   x.cluster,
   samples.part,
   loglik.fun = loglik.fun,
@@ -253,12 +253,12 @@ We also estimate the effective sample size (ESS). "Roughly speaking, the ESS of
 a quantity of interest captures how many independent draws contain the same 
 amount of information as the dependent sample obtained by the MCMC algorithm" 
 (Vehtari et al 2019). The maximum possible for the consensus and DPE algorithms 
-is $\frac{H^{total}}{M}$; for the other methods, including MoPP, the maximum 
+is $\frac{H^{total}}{M}$; for the other methods, including LEMIE, the maximum 
 possible is $H$.
 
 ```{r}
 posterior.estimates <- list()
-ess <- sapply(c("Vanilla", "Naive", "MoPP 1", "MoPP 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
+ess <- sapply(c("Vanilla", "Naive", "LEMIE 1", "LEMIE 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
 ```
 
 Full posterior sampling.
@@ -301,27 +301,27 @@ posterior.estimates[["Naive"]] <- apply(
 ess["Naive"] <- mcmcse::multiESS(abind::abind(samples.part, along = 1))
 ```
 
-MoPP algorithm 1.
+LEMIE algorithm 1.
 
 ```{r}
-posterior.estimates[["MoPP 1"]] <- rbind(
-  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec),
-  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
-  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
-  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",]
+posterior.estimates[["LEMIE 1"]] <- rbind(
+  "Mean" = lemie.mean(samples.part, lemie.out$wn.type_1, type = 1, Hvec = lemie.out$Hvec),
+  "Median" = lemie.quantile(samples.part, 0.5, lemie.out$wn.type_1, type = 1, Hvec = lemie.out$Hvec)["root",],
+  "2.5%" = lemie.quantile(samples.part, 0.025, lemie.out$wn.type_1, type = 1, Hvec = lemie.out$Hvec)["root",],
+  "97.5%" = lemie.quantile(samples.part, 0.975, lemie.out$wn.type_1, type = 1, Hvec = lemie.out$Hvec)["root",]
 )
-posterior.estimates[["MoPP 1"]] <- rbind(
-  posterior.estimates[["MoPP 1"]],
-  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 1"]]["Mean",] ^ 2)
+posterior.estimates[["LEMIE 1"]] <- rbind(
+  posterior.estimates[["LEMIE 1"]],
+  "Std. Dev" = sqrt(lemie.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), lemie.out$wn.type_1, type = 1, Hvec = lemie.out$Hvec) - posterior.estimates[["LEMIE 1"]]["Mean",] ^ 2)
 )
 
-ess["MoPP 1"] <- exp(2 * log(sum(mopp.out$Hvec)) -
+ess["LEMIE 1"] <- exp(2 * log(sum(lemie.out$Hvec)) -
   lrowsums(
     unlist(
       mapply(
         FUN = function(w, h) {2 * w + 2 * log(h)},
-        mopp.out$wn.type_1,
-        mopp.out$Hvec,
+        lemie.out$wn.type_1,
+        lemie.out$Hvec,
         SIMPLIFY = FALSE
       )
     )
@@ -329,21 +329,21 @@ ess["MoPP 1"] <- exp(2 * log(sum(mopp.out$Hvec)) -
 )
 ```
 
-MoPP algorithm 2.
+LEMIE algorithm 2.
 
 ```{r}
-posterior.estimates[["MoPP 2"]] <- rbind(
-  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec),
-  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
-  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
-  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",]
+posterior.estimates[["LEMIE 2"]] <- rbind(
+  "Mean" = lemie.mean(samples.part, lemie.out$wn.type_2, type = 2, Hvec = lemie.out$Hvec),
+  "Median" = lemie.quantile(samples.part, 0.5, lemie.out$wn.type_2, type = 2, Hvec = lemie.out$Hvec)["root",],
+  "2.5%" = lemie.quantile(samples.part, 0.025, lemie.out$wn.type_2, type = 2, Hvec = lemie.out$Hvec)["root",],
+  "97.5%" = lemie.quantile(samples.part, 0.975, lemie.out$wn.type_2, type = 2, Hvec = lemie.out$Hvec)["root",]
 )
-posterior.estimates[["MoPP 2"]] <- rbind(
-  posterior.estimates[["MoPP 2"]],
-  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 2"]]["Mean",] ^ 2)
+posterior.estimates[["LEMIE 2"]] <- rbind(
+  posterior.estimates[["LEMIE 2"]],
+  "Std. Dev" = sqrt(lemie.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), lemie.out$wn.type_2, type = 2, Hvec = lemie.out$Hvec) - posterior.estimates[["LEMIE 2"]]["Mean",] ^ 2)
 )
 
-ess["MoPP 2"] <- exp(-lrowsums(2 * unlist(mopp.out$wn.type_2)))
+ess["LEMIE 2"] <- exp(-lrowsums(2 * unlist(lemie.out$wn.type_2)))
 ```
 
 Consensus Monte Carlo.
@@ -433,7 +433,7 @@ and so on). Samples of each element are stored in a matrix with one column for
 each element.
 
 OPTION:
-It will make likelihood evaluations for the MoPP algorithm easier if we store 
+It will make likelihood evaluations for the LEMIE algorithm easier if we store 
 samples of the symmetric square root of the precision matrix as well as the 
 covariance matrix.
 
@@ -550,7 +550,7 @@ samples.part.frac <- lapply(samples.part.frac, FUN = as.matrix)
 
 ### Pooling algorithms
 
-Here we define the log likelihood function, to be used by MoPP. This is 
+Here we define the log likelihood function, to be used by LEMIE. This is 
 specific to the model with $\Sigma$ unknown.
 
 ```{r}
@@ -572,11 +572,11 @@ loglik.fun <- function(theta, x, d) {
 }
 ```
 
-MoPP.
+LEMIE.
 
 ```{r}
 timer <- proc.time()
-mopp.out <- mopp.weights(
+lemie.out <- lemie.weights(
   x.cluster,
   samples.part,
   loglik.fun = loglik.fun,
@@ -635,7 +635,7 @@ dimension.
 
 ```{r}
 posterior.estimates <- list()
-ess <- sapply(c("Vanilla", "Naive", "MoPP 1", "MoPP 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
+ess <- sapply(c("Vanilla", "Naive", "LEMIE 1", "LEMIE 2", "Consensus 1", "Consensus 2", "NDPE", "SDPE"), FUN = function(a) {NA})
 ```
 
 Full posterior sampling.
@@ -678,27 +678,27 @@ posterior.estimates[["Naive"]] <- apply(
 ess["Naive"] <- mcmcse::multiESS(abind::abind(samples.part, along = 1))
 ```
 
-MoPP algorithm 1.
+LEMIE algorithm 1.
 
 ```{r}
-posterior.estimates[["MoPP 1"]] <- rbind(
-  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec),
-  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
-  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",],
-  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec)["root",]
+posterior.estimates[["LEMIE 1"]] <- rbind(
+  "Mean" = lemie.mean(samples.part, lemie.out$wn.type_1, type = 1, Hvec = lemie.out$Hvec),
+  "Median" = lemie.quantile(samples.part, 0.5, lemie.out$wn.type_1, type = 1, Hvec = lemie.out$Hvec)["root",],
+  "2.5%" = lemie.quantile(samples.part, 0.025, lemie.out$wn.type_1, type = 1, Hvec = lemie.out$Hvec)["root",],
+  "97.5%" = lemie.quantile(samples.part, 0.975, lemie.out$wn.type_1, type = 1, Hvec = lemie.out$Hvec)["root",]
 )
-posterior.estimates[["MoPP 1"]] <- rbind(
-  posterior.estimates[["MoPP 1"]],
-  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_1, type = 1, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 1"]]["Mean",] ^ 2)
+posterior.estimates[["LEMIE 1"]] <- rbind(
+  posterior.estimates[["LEMIE 1"]],
+  "Std. Dev" = sqrt(lemie.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), lemie.out$wn.type_1, type = 1, Hvec = lemie.out$Hvec) - posterior.estimates[["LEMIE 1"]]["Mean",] ^ 2)
 )
 
-ess["MoPP 1"] <- exp(2 * log(sum(mopp.out$Hvec)) -
+ess["LEMIE 1"] <- exp(2 * log(sum(lemie.out$Hvec)) -
   lrowsums(
     unlist(
       mapply(
         FUN = function(w, h) {2 * w + 2 * log(h)},
-        mopp.out$wn.type_1,
-        mopp.out$Hvec,
+        lemie.out$wn.type_1,
+        lemie.out$Hvec,
         SIMPLIFY = FALSE
       )
     )
@@ -706,21 +706,21 @@ ess["MoPP 1"] <- exp(2 * log(sum(mopp.out$Hvec)) -
 )
 ```
 
-MoPP algorithm 2.
+LEMIE algorithm 2.
 
 ```{r}
-posterior.estimates[["MoPP 2"]] <- rbind(
-  "Mean" = mopp.mean(samples.part, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec),
-  "Median" = mopp.quantile(samples.part, 0.5, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
-  "2.5%" = mopp.quantile(samples.part, 0.025, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",],
-  "97.5%" = mopp.quantile(samples.part, 0.975, mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec)["root",]
+posterior.estimates[["LEMIE 2"]] <- rbind(
+  "Mean" = lemie.mean(samples.part, lemie.out$wn.type_2, type = 2, Hvec = lemie.out$Hvec),
+  "Median" = lemie.quantile(samples.part, 0.5, lemie.out$wn.type_2, type = 2, Hvec = lemie.out$Hvec)["root",],
+  "2.5%" = lemie.quantile(samples.part, 0.025, lemie.out$wn.type_2, type = 2, Hvec = lemie.out$Hvec)["root",],
+  "97.5%" = lemie.quantile(samples.part, 0.975, lemie.out$wn.type_2, type = 2, Hvec = lemie.out$Hvec)["root",]
 )
-posterior.estimates[["MoPP 2"]] <- rbind(
-  posterior.estimates[["MoPP 2"]],
-  "Std. Dev" = sqrt(mopp.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), mopp.out$wn.type_2, type = 2, Hvec = mopp.out$Hvec) - posterior.estimates[["MoPP 2"]]["Mean",] ^ 2)
+posterior.estimates[["LEMIE 2"]] <- rbind(
+  posterior.estimates[["LEMIE 2"]],
+  "Std. Dev" = sqrt(lemie.mean(lapply(samples.part, FUN = function(theta) {theta ^ 2}), lemie.out$wn.type_2, type = 2, Hvec = lemie.out$Hvec) - posterior.estimates[["LEMIE 2"]]["Mean",] ^ 2)
 )
 
-ess["MoPP 2"] <- exp(-lrowsums(2 * unlist(mopp.out$wn.type_2)))
+ess["LEMIE 2"] <- exp(-lrowsums(2 * unlist(lemie.out$wn.type_2)))
 ```
 
 Consensus Monte Carlo.

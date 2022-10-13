@@ -1,4 +1,4 @@
-#' Calculate the MoPP algorithm sample importance weights
+#' Calculate the LEMIE algorithm sample importance weights
 #'
 #' Computes importance weights for the samples drawn from all partial posterior 
 #' distributions to form a pooled, weighted sample that can be used to 
@@ -71,9 +71,10 @@
 #' @param type an integer, either 1, 2 or 3, specifying the weighting type to 
 #' use.
 #' @param laplace.type_3.scale an optional matrix
-#' @param laplace.type_3.dof an optional numeric. Must be greater than the dimension of the model plus 1.
+#' @param laplace.type_3.dof an optional numeric. Must be greater than the 
+#' dimension of the model plus 1.
 #' @param w.type_1 an optional list of single column matrices containing the 
-#' unnormalised MoPP type 1 weights, the same as the output field. Supply this 
+#' unnormalised LEMIE type 1 weights, the same as the output field. Supply this 
 #' to speed up computation of the type 2 weights if the type 1 weights have 
 #' already been computated.
 #' @param keep.type1 logical. If \code{TRUE} the type 1 weights are returned as 
@@ -120,7 +121,7 @@
 #' posterior (same as argument \code{theta}).
 #'
 #' @export
-mopp.weights <- function(
+lemie.weights <- function(
   x,
   theta,
   loglik = NULL,
@@ -337,7 +338,7 @@ mopp.weights <- function(
     names(w.type_1) <- NULL
     if (verbose) message("Done.")
   }
-  norm <- mopp.normalise(
+  norm <- lemie.normalise(
     w = w.type_1,
     type = 1,
     just_compute_constant = type %in% 2:3 && !keep.type1,
@@ -363,7 +364,7 @@ mopp.weights <- function(
     w.type_2 <- matrix(w.numerator - type_2.mix, dim(w.numerator)[1], dim(w.numerator)[2]) - log(ctx$H)
     if (verbose) message("Done.")
   
-    norm <- mopp.normalise(
+    norm <- lemie.normalise(
       w = w.type_2,
       type = 2,
       pp.inds = params$pp.inds,
@@ -483,7 +484,7 @@ mopp.weights <- function(
     w.type_3 <- matrix(w.numerator[subsample.absolute_inds,,drop = FALSE] - type_3.mix, subsample_size, dim(w.numerator)[2])
     if (verbose) message("Done.")
   
-    norm <- mopp.normalise(
+    norm <- lemie.normalise(
       w = w.type_3,
       type = 3,
       just_compute_constant = FALSE,
@@ -537,7 +538,8 @@ mopp.weights <- function(
 #' \item{\code{theta}}{A matrix of all samples from the partial posteriors, 
 #' pooled.}
 #' \item{H}{Total number of samples (rows of \code{theta}).}
-#' \item{\code{use_spark}}{Logical. \code{TRUE} if a Spark cluster is available.}
+#' \item{\code{use_spark}}{Logical. \code{TRUE} if a Spark cluster is 
+#' available.}
 #' \item{\code{loglik.fun}}{The log likelihood function.}
 #' \item{\code{args}}{A list of additional arguments to the log likelihood 
 #' function. This list can be empty.}
@@ -569,8 +571,8 @@ likelihood.worker <- function(df, context) {
 #' Monte Carlo estimate of the expectation of a univariate function
 #'
 #' Compute a Monte Carlo estimate of the expectation of a function of model 
-#' parameters. Samples of the parameter vector are weighted using the MoPP type 
-#' 1, 2 or 3 importance weights.
+#' parameters. Samples of the parameter vector are weighted using the LEMIE 
+#' type 1, 2 or 3 importance weights.
 #'
 #' \code{FUN} should take a matrix argument and return a matrix. The argument 
 #' matrix should be a matrix of samples, just like the elements of 
@@ -578,7 +580,7 @@ likelihood.worker <- function(df, context) {
 #' have the same number of rows. The rows of both matrices correspond to 
 #' samples.
 #'
-#' @seealso \code{mopp.quantile}, \code{mopp.weights}
+#' @seealso \code{lemie.quantile}, \code{lemie.weights}
 #'
 #' @param theta a list of matrices, each containing samples of model parameters 
 #' from partial posterior distributions. Each matrix should have the same 
@@ -587,7 +589,7 @@ likelihood.worker <- function(df, context) {
 #' partial posterior.
 #' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
 #' matrix (\code{type = 3}), each containing normalised weights, one for each 
-#' sample in \code{theta} and obtained using the \code{\link{mopp.weights}} 
+#' sample in \code{theta} and obtained using the \code{\link{lemie.weights}} 
 #' function.
 #' @param FUN a matrix-valued function that we wish to estimate the expected 
 #' value of. See details.
@@ -598,7 +600,7 @@ likelihood.worker <- function(df, context) {
 #' @return A vector of weighted sample means of \code{FUN}, approximating the 
 #' posterior expectation.
 #' @export
-mopp.mean <- function(
+lemie.mean <- function(
   theta,
   wn,
   FUN = identity,
@@ -657,14 +659,14 @@ mopp.mean <- function(
 #'
 #' Compute a KDE estimate of the posterior density evaluated at a number of 
 #' values of a univariate random variable. The posterior is estimated with a 
-#' Monte Carlo sample weighted by the MoPP type 1 or type 2 importance weights.
+#' Monte Carlo sample weighted by the LEMIE type 1 or type 2 importance weights.
 #'
-#' The output of this function is the same as \code{mopp.mean} with a 
+#' The output of this function is the same as \code{lemie.mean} with a 
 #' \code{FUN} argument being a Gaussian kernel function, evaluated over a range 
 #' of values. This function is optimised to perform this without looping over 
 #' target values.
 #'
-#' @seealso \code{mopp.mkde}, \code{mopp.mean}, \code{mopp.weights}
+#' @seealso \code{lemie.mkde}, \code{lemie.mean}, \code{lemie.weights}
 #'
 #' @param x a vector of values for which the density estimate is to be computed.
 #' @param theta a list of matrices, each containing samples of model parameters 
@@ -674,13 +676,13 @@ mopp.mean <- function(
 #' partial posterior.
 #' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
 #' matrix (\code{type = 3}), each containing normalised weights, one for each 
-#' sample in \code{theta} and obtained using the \code{\link{mopp.weights}} 
+#' sample in \code{theta} and obtained using the \code{\link{lemie.weights}} 
 #' function.
 #' @param bw the smoothing bandwidth to be used. The kernels are scaled such 
 #' that this is the standard deviation of the (Gaussian) smoothing kernel.
 #' @param type an integer, either 0, 1, 2 or 3, specifying the weighting type 
-#' used. Types 1, 2 and 3 refer to the MoPP weighting algorithms (see 
-#' \code{mopp.weights}). Type 0 can be used to use uniform weights, which 
+#' used. Types 1, 2 and 3 refer to the LEMIE weighting algorithms (see 
+#' \code{lemie.weights}). Type 0 can be used to use uniform weights, which 
 #' allows one to supply samples from another algorithm; in this case, \code{wn} 
 #' is not required.
 #' @param Hvec an optional vector specifying the number of samples taken from 
@@ -694,7 +696,7 @@ mopp.mean <- function(
 #'
 #' @return A vector the same length as \code{x} of density estimates.
 #' @export
-mopp.kde <- function(
+lemie.kde <- function(
   x,
   theta,
   wn,
@@ -758,14 +760,14 @@ mopp.kde <- function(
 #'
 #' Compute a KDE estimate of the posterior density evaluated at a number of 
 #' values of a multivariate random variable. The posterior is estimated with a 
-#' Monte Carlo sample weighted by the MoPP type 1 or type 2 importance weights.
+#' Monte Carlo sample weighted by the LEMIE type 1 or type 2 importance weights.
 #'
-#' The output of this function is the same as \code{mopp.mean} with a 
+#' The output of this function is the same as \code{lemie.mean} with a 
 #' \code{FUN} argument being a multivariate Gaussian kernel function, evaluated 
 #' over a range of values. This function is optimised to perform this without 
 #' looping over target values.
 #'
-#' @seealso \code{mopp.kde}, \code{mopp.mean}, \code{mopp.weights}
+#' @seealso \code{lemie.kde}, \code{lemie.mean}, \code{lemie.weights}
 #'
 #' @param x a vector of values for which the density estimate is to be computed.
 #' @param theta a list of matrices, each containing samples of model parameters 
@@ -775,14 +777,14 @@ mopp.kde <- function(
 #' partial posterior.
 #' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
 #' matrix (\code{type = 3}), each containing normalised weights, one for each 
-#' sample in \code{theta} and obtained using the \code{\link{mopp.weights}} 
+#' sample in \code{theta} and obtained using the \code{\link{lemie.weights}} 
 #' function.
 #' @param BW symmetric positive definite matrix, the smoothing bandwidth to be 
 #' used, as a covariance matrix. The kernels are scaled such that this is the 
 #' covariance matrix of the (multivariate Gaussian) smoothing kernel.
 #' @param type an integer, either 0, 1, 2 or 3, specifying the weighting type 
-#' used. Types 1, 2 and 3 refer to the MoPP weighting algorithms (see 
-#' \code{mopp.weights}). Type 0 can be used to use uniform weights, which 
+#' used. Types 1, 2 and 3 refer to the LEMIE weighting algorithms (see 
+#' \code{lemie.weights}). Type 0 can be used to use uniform weights, which 
 #' allows one to supply samples from another algorithm; in this case, \code{wn} 
 #' is not required.
 #' @param Hvec an optional vector specifying the number of samples taken from 
@@ -796,7 +798,7 @@ mopp.kde <- function(
 #'
 #' @return A vector the same length as \code{x} of density estimates.
 #' @export
-mopp.mkde <- function(
+lemie.mkde <- function(
   x,
   theta,
   wn,
@@ -877,8 +879,8 @@ mopp.mkde <- function(
 #' Monte Carlo estimate of a quantile of a univariate function
 #'
 #' Compute a Monte Carlo estimate of quantiles of a function of model 
-#' parameters. Samples of the parameter vector are weighted using the MoPP type 
-#' 1 or type 2 importance weights.
+#' parameters. Samples of the parameter vector are weighted using the LEMIE 
+#' type 1 or type 2 importance weights.
 #'
 #' Whilst \code{FUN} is matrix-valued, with possibly >1 columns, the estimated 
 #' quantiles returned are quantiles of each dimension of the function 
@@ -890,7 +892,7 @@ mopp.mkde <- function(
 #' have the same number of rows. The rows of both matrices correspond to 
 #' samples.
 #'
-#' @seealso \code{mopp.mean}, \code{mopp.weights}
+#' @seealso \code{lemie.mean}, \code{lemie.weights}
 #'
 #' @param theta a list of matrices, each containing samples of model parameters 
 #' from partial posterior distributions. Each matrix should have the same 
@@ -901,7 +903,7 @@ mopp.mkde <- function(
 #' \code{FUN} to be estimated.
 #' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
 #' matrix (\code{type = 3}), each containing normalised weights, one for each 
-#' sample in \code{theta} and obtained using the \code{\link{mopp.weights}} 
+#' sample in \code{theta} and obtained using the \code{\link{lemie.weights}} 
 #' function.
 #' @param FUN a matrix-valued function that we wish to estimate the expected 
 #' value of. See details.
@@ -915,7 +917,7 @@ mopp.mkde <- function(
 #' \code{\link{uniroot}}, the first row of which contains the weighted 
 #' quantiles of \code{FUN}.
 #' @export
-mopp.quantile <- function(
+lemie.quantile <- function(
   theta,
   prob,
   wn,
@@ -978,13 +980,13 @@ mopp.quantile <- function(
   return(q.hat)
 }
 
-#' Normalise MoPP weights
+#' Normalise LEMIE weights
 #'
-#' Performs the self-normalisation of the importance weights in MoPP, necessary 
-#' for estimating posterior expectations with the weighted samples from partial 
-#' posteriors.
+#' Performs the self-normalisation of the importance weights in LEMIE, 
+#' necessary for estimating posterior expectations with the weighted samples 
+#' from partial posteriors.
 #'
-#' Weight normalisation is done differently for the two versions of MoPP, as 
+#' Weight normalisation is done differently for the two versions of LEMIE, as 
 #' specified by the \code{type} argument.
 #'
 #' The type 1 weights will be normalised relative to the partial posterior from 
@@ -993,7 +995,7 @@ mopp.quantile <- function(
 #'
 #' @param w either a single column matrix, if \code{type = 2} or 
 #' \code{type = 3}, or a list of single column matrices, if \code{type = 1}, 
-#' containing the unnormalised MoPP weights on the log scale.
+#' containing the unnormalised LEMIE weights on the log scale.
 #' @param type an integer, either 1, 2 or 3, specifying the weighting type used.
 #' @param pp.inds integer vector, required for type 2 if \code{as.list} is 
 #' \code{TRUE} (default), with one element for each row of \code{w}: the index 
@@ -1012,7 +1014,7 @@ mopp.quantile <- function(
 #' \code{parallel} will not be used.
 #' @return A list containing fields:
 #' \item{wn}{A list of single column matrices, if \code{type = 1}, containing 
-#' the normalised MoPP weights on the log scale. If \code{as.list} is 
+#' the normalised LEMIE weights on the log scale. If \code{as.list} is 
 #' \code{FALSE} and \code{type} is 2, these will be returned as a single 
 #' matrix. If \code{type}, a single column matrix.}
 #' \item{w.sum}{Either a numeric, if \code{type = 2} or \code{type = 3}, or a 
@@ -1020,7 +1022,7 @@ mopp.quantile <- function(
 #' used (log scale).}
 #'
 #' @export
-mopp.normalise <- function(
+lemie.normalise <- function(
   w,
   type,
   pp.inds = NULL,
@@ -1095,7 +1097,7 @@ mopp.normalise <- function(
 
 
 
-#' Smooth the MoPP weights using the generalised Pareto distribution
+#' Smooth the LEMIE weights using the generalised Pareto distribution
 #'
 #' @section References:
 #' \itemize{

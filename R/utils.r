@@ -311,7 +311,7 @@ parallel.start <- function(par.clust = NULL, ncores = 1, forking = FALSE) {
 #' specified multivariate normal distribution.
 #'
 #' @examples
-#' library(moppr)
+#' library(parallelbayes)
 #' library(mvtnorm)
 #' # These parameters cause underflow with dmvnorm:
 #' m <- c(2.6, 6.3, -1.5, 1.6, 1, -0.8, 3.1, -1.6)

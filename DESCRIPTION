@@ -1,11 +1,13 @@
-Package: moppr
-Title: Posterior inference using a mixture of partial posteriors
-Version: 0.4.4
-Date: 2022-07-03
+Package: parallelbayes
+Title: Bayesian computation from parallel sampling using distributed data
+Version: 0.5.0
+Date: 2022-10-13
 Authors@R: person("Marc", "Box", email = "marc.box@protonmail.com", role = c("aut", "cre"))
-Description: Implementation of the MoPP algorithm with examples. MoPP 
-    facilitates sample-based Bayesian inference when data are partitioned and 
-    parts distributed across nodes of a cluster or held by different parties.
+Description: Implementation of the Laplace enriched multiple importance 
+    estimator (LEMIE) algorithm and alternatives, with examples. LEMIE 
+    facilitates sample-based posterior inference when data are partitioned and 
+    samples have been drawn (using MCMC, for example) from local posterior 
+    distributions (those conditioned on isolated parts of the data).
 License: GPL (>=3)
 Imports:
     abind (>= 1.4-5)

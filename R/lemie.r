@@ -1,4 +1,4 @@
-#' Calculate the MoPP algorithm sample importance weights
+#' Calculate the LEMIE algorithm sample importance weights
 #'
 #' Computes importance weights for the samples drawn from all partial posterior 
 #' distributions to form a pooled, weighted sample that can be used to 
@@ -37,6 +37,19 @@
 #' distributions using proper priors rather than the "fractionated" priors of 
 #' the consensus Monte Carlo algorithm of Scott et al 2016.
 #'
+#' @section Reusing output from \code{type == 1}:
+#'
+#' Some of the computational steps are common to the three versions of the 
+#' algorithm. Therefore it can save computation to reuse the intermediate 
+#' results when calling with \code{type == 2} or \code{type == 3} after an 
+#' initial call with \code{type == 1}.
+#'
+#' If Laplace approximations were used in the initial run, the samples from 
+#' those approximations should be supplied in elements of \code{theta}, 
+#' appended after the samples from the partial posteriors. Arguments 
+#' \code{laplace.type_1}, \code{laplace.type_2} and \code{laplace.type_3} 
+#' should all be \code{FALSE}.
+#'
 #' @section References:
 #' \itemize{
 #' \item{Scott, Steven L., Blocker, A.W., Bonassi, F.V., Chipman, H.A., George, E.I. and McCulloch, R.E., 2016. Bayes and big data: The consensus Monte Carlo algorithm. \emph{International Journal of Management Science and Engineering Management}, 11(2), pp.78-88.}
@@ -55,14 +68,18 @@
 #' matrices, whose values are log likelihoods. See details.
 #' @param loglik.fun the log likelihood function. Optional if \code{loglik} is 
 #' supplied. See details.
-#' @param type an integer, either 1 or 2, specifying the weighting type to use. 
+#' @param type an integer, either 1, 2 or 3, specifying the weighting type to 
+#' use.
+#' @param laplace.type_3.scale an optional matrix
+#' @param laplace.type_3.dof an optional numeric. Must be greater than the 
+#' dimension of the model plus 1.
 #' @param w.type_1 an optional list of single column matrices containing the 
-#' unnormalised MoPP type 1 weights, the same as the output field. Supply this 
+#' unnormalised LEMIE type 1 weights, the same as the output field. Supply this 
 #' to speed up computation of the type 2 weights if the type 1 weights have 
 #' already been computated.
 #' @param keep.type1 logical. If \code{TRUE} the type 1 weights are returned as 
-#' well as the type 2 weights when \code{type = 2}. This is faster than 
-#' computing the type 1 and type 2 weights separately.
+#' well as the type 2/3 weights when \code{type = 2} or \code{type = 3}. This 
+#' is faster than computing the different weights separately.
 #' @param keep.unnormalised logical. If \code{TRUE} the unnormalised weights 
 #' are returned as well as the normalised.
 #' @param return.loglik logical. If \code{TRUE} the log likelihoods are 
@@ -70,6 +87,9 @@
 #' \code{loglik} argument, with elements as matrices.
 #' @param par.clust an optional cluster connection object from package 
 #' \code{parallel}. Ignored if \code{x} is a Spark table.
+#' @param forking logical. If \code{TRUE}, use forking functions 
+#' \code{\link[parallel]{mclapply}}, \code{\link[parallel]{mcmapply}}. Does not 
+#' work on Windows.
 #' @param ncores an optional integer specifying the number of CPU cores to use 
 #' (see \code{\link[parallel]{makeCluster}}). The default, 1, signifies that 
 #' \code{parallel} will not be used.
@@ -79,31 +99,50 @@
 #' @return A list containing fields:
 #' \item{Hvec}{A vector of the number of samples from each partial 
 #' posterior.}
-#' \item{wn.type_1 or wn.type_2}{The normalised weighted of type 1 or type 2, 
-#' depending on the value of \code{type}.}
+#' \item{wn.type_1, wn.type_2 or wn.type_3}{The normalised weighted of type 1, 
+#' 2 or type 3, depending on the value of \code{type}.}
 #' \item{wn.type_1}{Additionally returned if \code{keep.type1} is \code{TRUE}.}
 #' \item{w.type_1}{The corresponding unnormalised weights, if 
-#' \code{keep.unnormalised} is \code{TRUE}}
+#' \code{keep.unnormalised} is \code{TRUE} and \code{type = 1}}
 #' \item{w.type_2}{The corresponding unnormalised weights, if 
-#' \code{keep.unnormalised} is \code{TRUE}}
+#' \code{keep.unnormalised} is \code{TRUE} and \code{type = 2}}
+#' \item{w.type_3}{The corresponding unnormalised weights, if 
+#' \code{keep.unnormalised} is \code{TRUE} and \code{type = 3}}
 #' \item{loglik}{log likelihoods, returned if \code{return.loglik} is 
 #' \code{TRUE}}
+#' \item{subsamples}{List of samples, like \code{theta}, after taking a 
+#' subsample in the \code{type = 3} algorithm}
+#' \item{subsample.inds}{List of sample indices indicating which were taken in 
+#' the subsample in the \code{type = 3} algorithm}
+#' \item{kl_hat}{Estimates of the KL divergence from the posterior distribution 
+#' to each of the partial posteriors. Only returned if \code{type = 3}}
 #' Weights and log likelihoods are returned as lists of matrices with 1 column 
 #' and rows corresponding to sample. The list elements correspond to partial 
 #' posterior (same as argument \code{theta}).
 #'
 #' @export
-mopp.weights <- function(
+lemie.weights <- function(
   x,
   theta,
   loglik = NULL,
   loglik.fun = NULL,
-  type = 2,
+  type = 1,
+  subsample_size = NULL,
+  laplace.type_1 = FALSE,
+  laplace.type_2 = FALSE,
+  laplace.type_3 = FALSE,
+  laplace.type_1.sample_size = NULL,
+  laplace.type_2.sample_size = NULL,
+  laplace.type_3.sample_size = NULL,
+  laplace.type_3.scale = NULL,
+  laplace.type_3.dof = NULL,
+  params = NULL,
   w.type_1 = NULL,
   keep.type1 = TRUE,
   keep.unnormalised = FALSE,
   return.loglik = FALSE,
   par.clust = NULL,
+  forking = FALSE,
   ncores = 1,
   verbose = FALSE,
   ...
@@ -114,7 +153,7 @@ mopp.weights <- function(
   
   if (!("list" %in% class(theta))) stop("theta must be a list!")
   if (is.null(loglik) && is.null(loglik.fun)) stop("One of loglik or loglik.fun must be supplied!")
-  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
+  if (!(type %in% 1:3)) stop("type must be 1, 2 or 3!")
   if (class(x)[1] == "tbl_spark") {
     if (!require(sparklyr)) stop("sparklyr is required!")
     use_spark <- TRUE
@@ -122,37 +161,121 @@ mopp.weights <- function(
     if (!("list" %in% class(x))) stop("x must be a Spark table or a list!")
     use_spark <- FALSE
   }
-  if (!use_spark) par <- parallel.start(par.clust, ncores) 
+  if (!use_spark) par <- parallel.start(par.clust, ncores, forking) 
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
-  n_shards <- length(theta)
-  Hvec <- sapply(theta, nrow)
-  if (any(Hvec < 1)) stop("Insufficient useable samples!")
-  H <- sum(Hvec)
-  # Dimension of the model.
-  d <- ncol(theta[[1]])
-  # Record which partial posterior each sample came from.
-  pp.inds <- rep(1:n_shards, Hvec)
-  
-  
+  if (is.null(params)) {
+    params <- list(
+      Hvec = sapply(theta, nrow),
+      loglik.fun = loglik.fun,
+      # Dimension of the model.
+      d = ncol(theta[[1]]),
+      n_shards = length(theta)
+    )
+    # Record which partial posterior each sample came from.
+    params$pp.inds <- rep(1:length(params$Hvec), params$Hvec)
+  }
+  if (!forking) {
+    params$use_parallel <- par$valid
+  } else {
+    params$use_parallel <- FALSE
+  }
   # Parameter list for workers.
   ctx <- list(
     theta = do.call(rbind, theta),
-    H = H,
+    H = sum(params$Hvec),
     use_spark = use_spark,
     loglik.fun = loglik.fun,
     args = list(...)
   )
-  # Other parameters.
-  params <- list(
-    use_spark = use_spark,
-    use_parallel = par$valid,
-    # Pool samples into one matrix.
-    theta = do.call(rbind, theta),
-    Hvec = Hvec,
-    pp.inds = pp.inds,
-    loglik.fun = loglik.fun,
-    d = d
-  )
+  if (any(params$Hvec < 1)) stop("Insufficient useable samples!")
+  # The first min(params$Hvec) Laplace type 1 samples are by the consensus 
+  # Monte Carlo algorithm. Any above that will be sampled from the normal 
+  # distribution implied by the consensus Monte Carlo algorithm.
+  if (laplace.type_1 && is.null(laplace.type_1.sample_size)) laplace.type_1.sample_size <- min(params$Hvec)
+  if (laplace.type_2 && is.null(laplace.type_2.sample_size)) laplace.type_2.sample_size <- max(params$Hvec)
+  if (laplace.type_3 && is.null(laplace.type_3.sample_size)) laplace.type_3.sample_size <- max(params$Hvec)
+  if (type == 3) {
+    if (is.null(subsample_size)) {
+      subsample_size <- min(params$Hvec)
+      if (laplace.type_2 || laplace.type_3) subsample_size <- min(subsample_size, laplace.type_2.sample_size, laplace.type_3.sample_size)
+    } else if (subsample_size > ctx$H) {
+      stop("subsample_size is too large!")
+    } else if (subsample_size > min(sapply(theta, nrow))) {
+      warning("Using a subsample_size greater than the least number of samples from any partial posterior may result in a biased estimator.")
+    }
+  }
+  
+
+  # Sample from Laplace approximations.
+# HVE NOT YET WORKED OUT HOW THIS WORKS WITH SPARK.
+  if (laplace.type_1) {
+    # First set of samples: those from (weighted) consensus Monte Carlo.
+    con.out <- consensus.weights(
+      theta,
+      type = 2,
+      return.pooled = TRUE,
+      par.clust = par$par.clust,
+      forking = forking,
+      ncores = ncores
+    )
+    laplace.type_1.samples <- con.out$theta.w.pooled
+    params$laplace.type_1.mean <- colMeans(laplace.type_1.samples)
+    params$laplace.type_1.cov <- con.out$w.pooled
+    # More samples required? Sample from implied normal distribution.
+    if (laplace.type_1.sample_size > nrow(con.out$theta.w.pooled)) {
+      laplace.type_1.samples <- rbind(laplace.type_1.samples, MASS::mvrnorm(laplace.type_1.sample_size, params$laplace.type_1.mean, params$laplace.type_1.cov))
+    }
+    rm(con.out)
+  } else {
+    laplace.type_1.samples <- matrix(NA, 0, params$d)
+    if (is.null(params$laplace.type_1)) params$laplace.type_1 <- FALSE
+  }
+  if (laplace.type_2) {
+    params$laplace.type_2.mean <- colMeans(ctx$theta)
+    # Sample covariance matrix.
+    params$laplace.type_2.cov <- crossprod(sweep(ctx$theta, MARGIN = 2, STATS = params$laplace.type_2.mean, FUN = "-", check.margin = FALSE)) / (ctx$H - 1)
+    # Sample from multivariate normal distribution.
+    laplace.type_2.samples <- MASS::mvrnorm(laplace.type_2.sample_size, params$laplace.type_2.mean, params$laplace.type_2.cov)
+  } else {
+    laplace.type_2.samples <- matrix(NA, 0, params$d)
+    if (is.null(params$laplace.type_2)) params$laplace.type_2 <- FALSE
+  }
+  if (laplace.type_3) {
+    if (is.null(laplace.type_3.scale)) laplace.type_3.scale <- matrix(2.5 ^ 2, params$d, params$d)
+    if (is.null(laplace.type_3.dof)) laplace.type_3.dof <- params$d + 2
+    params$laplace.type_3.mean <- colMeans(ctx$theta)
+    S <- crossprod(abind::abind(lapply(theta, FUN = function(th) {sweep(th, MARGIN = 2, STATS = colMeans(th), FUN = "-", check.margin = FALSE)}), along = 1))
+    # Sample from multivariate normal distribution.
+    params$laplace.type_3.cov <- (S + laplace.type_3.scale) / (nrow(ctx$theta) + laplace.type_3.dof - params$d - 1)
+    laplace.type_3.samples <- MASS::mvrnorm(laplace.type_3.sample_size, params$laplace.type_3.mean, params$laplace.type_3.cov)
+  } else {
+    laplace.type_3.samples <- matrix(NA, 0, params$d)
+    if (is.null(params$laplace.type_3)) params$laplace.type_3 <- FALSE
+  }
+  if (laplace.type_1) {
+    ctx$theta <- rbind(ctx$theta, laplace.type_1.samples)
+    ctx$H <- ctx$H + nrow(laplace.type_1.samples)
+    params$pp.inds <- c(params$pp.inds, rep(ifelse(length(params$pp.inds) > 0, max(params$pp.inds) + 1, 1), nrow(laplace.type_1.samples)))
+    params$Hvec <- c(params$Hvec, nrow(laplace.type_1.samples))
+    # Records that Laplace type 1 was done.
+    params$laplace.type_1 <- TRUE
+  }
+  if (laplace.type_2) {
+    ctx$theta <- rbind(ctx$theta, laplace.type_2.samples)
+    ctx$H <- ctx$H + laplace.type_2.sample_size
+    params$pp.inds <- c(params$pp.inds, rep(ifelse(length(params$pp.inds) > 0, max(params$pp.inds) + 1, 1), laplace.type_2.sample_size))
+    params$Hvec <- c(params$Hvec, laplace.type_2.sample_size)
+    # Records that Laplace type 2 was done.
+    params$laplace.type_2 <- TRUE
+  }
+  if (laplace.type_3) {
+    ctx$theta <- rbind(ctx$theta, laplace.type_3.samples)
+    ctx$H <- ctx$H + laplace.type_3.sample_size
+    params$pp.inds <- c(params$pp.inds, rep(ifelse(length(params$pp.inds) > 0, max(params$pp.inds) + 1, 1), laplace.type_3.sample_size))
+    params$Hvec <- c(params$Hvec, laplace.type_3.sample_size)
+    # Records that Laplace type 3 was done.
+    params$laplace.type_3 <- TRUE
+  }
   
   
   ##############################################################################
@@ -172,6 +295,8 @@ mopp.weights <- function(
       loglik <- lapply(loglik, as.matrix)
     } else if (params$use_parallel) {
       loglik <- parallel::parLapply(par$par.clust, x, likelihood.worker, context = ctx)
+    } else if (forking) {
+      loglik <- parallel::mclapply(x, FUN = likelihood.worker, context = ctx, mc.cores = ncores)
     } else {
       loglik <- lapply(x, likelihood.worker, ctx)
     }
@@ -185,14 +310,22 @@ mopp.weights <- function(
   
   # Multiply likelihoods.
   if (verbose) message("Computing unnormalised posterior densities...")
-  w.numerator <- rowSums(ll.array, dims = 2)
+  # Only samples from the partial posteriors - NOT laplace samples.
+  w.numerator <- rowSums(ll.array[,,1:params$n_shards,drop = FALSE], dims = 2)
   if (verbose) message("Done.")
   
   # Type 1 weights: divide out likelihood from partial posterior of origin; call 
   # it w.denominator.
   if (is.null(w.type_1)) {
     if (verbose) message("Computing type 1 weights...")
-    w.denominator <- matrix(ll.array[c(outer(1:H, (0:(dim(ll.array)[2] - 1)) * H, FUN = "+")) + (params$pp.inds - 1) * H * dim(ll.array)[2]], H, dim(ll.array)[2])
+    # Weight denominator for non-Laplace samples.
+    #w.denominator <- matrix(ll.array[c(outer(1:H, (0:(dim(ll.array)[2] - 1)) * H, FUN = "+")) + (params$pp.inds[1:H] - 1) * H * dim(ll.array)[2]], H, dim(ll.array)[2])
+    H.nonlaplace <- sum(params$Hvec[1:params$n_shards])
+    w.denominator <- matrix(ll.array[1:H.nonlaplace + (params$pp.inds[1:H.nonlaplace] - 1) * H.nonlaplace], H.nonlaplace, 1)
+    # Weight denominator for Laplace samples.
+    if (laplace.type_1) w.denominator <- c(w.denominator, dmnorm(laplace.type_1.samples, params$laplace.type_1.mean, params$laplace.type_1.cov, log = TRUE))
+    if (laplace.type_2) w.denominator <- c(w.denominator, dmnorm(laplace.type_2.samples, params$laplace.type_2.mean, params$laplace.type_2.cov, log = TRUE))
+    if (laplace.type_3) w.denominator <- c(w.denominator, dmnorm(laplace.type_3.samples, params$laplace.type_3.mean, params$laplace.type_3.cov, log = TRUE))
   
     w.type_1 <- matrix(w.numerator - w.denominator, dim(w.numerator)[1], dim(w.numerator)[2])
     # Need the shard specific sums of type 1 weights for normalisation of 
@@ -205,11 +338,12 @@ mopp.weights <- function(
     names(w.type_1) <- NULL
     if (verbose) message("Done.")
   }
-  norm <- mopp.normalise(
+  norm <- lemie.normalise(
     w = w.type_1,
     type = 1,
-    just_compute_constant = type == 2 && !keep.type1,
+    just_compute_constant = type %in% 2:3 && !keep.type1,
     par.clust = par$par.clust,
+    forking = forking,
     verbose = verbose
   )
   w.sum_type_1 <- norm$w.sum
@@ -218,23 +352,25 @@ mopp.weights <- function(
   # Type 2 weights.
   if (type == 2) {
     if (verbose) message("Computing type 2 weights...")
+    # Mixture component weights.
+    q <- params$Hvec / ctx$H
     # Want this as a matrix for type 2 calculations.
     w.sum_type_1 <- abind::abind(w.sum_type_1, along = 2)
     # Need to weight each partial posterior density in ll.array by the mean of 
-    # the type 1 weights.
-    # Note: division of w.sum_type_1 by n samples, to get the mean, cancels 
-    # with multiplication by n samples in the mixture weights.
-    type_2.mix <- sweep(ll.array, MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE) - log(H)
+    # the type 1 weights, and the component weights.
+    type_2.mix <- sweep(sweep(ll.array, MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE), MARGIN = 3, STATS = log(q) - log(params$Hvec), FUN = "+", check.margin = FALSE)
+    #type_2.mix <- sweep(ll.array, MARGIN = 2:3, STATS = w.mean_type_1, FUN = "+", check.margin = FALSE) - log(ctx$H)
     type_2.mix <- lrowsums(type_2.mix, 3, drop. = TRUE)
-    w.type_2 <- matrix(w.numerator - type_2.mix, dim(w.numerator)[1], dim(w.numerator)[2])
+    w.type_2 <- matrix(w.numerator - type_2.mix, dim(w.numerator)[1], dim(w.numerator)[2]) - log(ctx$H)
     if (verbose) message("Done.")
   
-    norm <- mopp.normalise(
+    norm <- lemie.normalise(
       w = w.type_2,
       type = 2,
       pp.inds = params$pp.inds,
       just_compute_constant = FALSE,
       par.clust = par$par.clust,
+      forking = forking,
       verbose = verbose
     )
     wn.type_2 <- norm$wn
@@ -245,11 +381,130 @@ mopp.weights <- function(
       w.type_2 <- lapply(w.type_2, FUN = function(ww){dimnames(ww) <- NULL; ww})
       names(w.type_2) <- NULL
     }
+
+  } else if (type == 3) {
+    if (verbose) message("Computing type 3 weights...")
+    # Estimates of the KL divergences.
+    # These are for the non-Laplace samples.
+    kl_hat <- sapply(1:params$n_shards,
+      FUN = function(j) {
+        -sum(w.type_1[[j]]) / params$Hvec[j] +
+        w.sum_type_1[[j]] - log(params$Hvec[j])
+      }
+    )
+    # Add in the KL divergence estimates for the Laplace samples.
+    if (params$laplace.type_1) {
+      entropy <- 1 / 2 * determinant(2 * pi * exp(1) * params$laplace.type_1.cov, logarithm = TRUE)$modulus
+      ind <- params$n_shards + 1
+      kl_hat <- c(kl_hat, -sum(w.numerator[params$pp.inds == ind,,drop = FALSE]) / params$Hvec[ind] + w.sum_type_1[[ind]] - log(params$Hvec[ind]) - entropy)
+    }
+    if (params$laplace.type_2) {
+      entropy <- 1 / 2 * determinant(2 * pi * exp(1) * params$laplace.type_2.cov, logarithm = TRUE)$modulus
+      ind <- params$n_shards + params$laplace.type_1 + 1
+      kl_hat <- c(kl_hat, -sum(w.numerator[params$pp.inds == ind,,drop = FALSE]) / params$Hvec[ind] + w.sum_type_1[[ind]] - log(params$Hvec[ind]) - entropy)
+    }
+    if (params$laplace.type_3) {
+      entropy <- 1 / 2 * determinant(2 * pi * exp(1) * params$laplace.type_3.cov, logarithm = TRUE)$modulus
+      ind <- params$n_shards + params$laplace.type_1 + params$laplace.type_2 + 1
+      kl_hat <- c(kl_hat, -sum(w.numerator[params$pp.inds == ind,,drop = FALSE]) / params$Hvec[ind] + w.sum_type_1[[ind]] - log(params$Hvec[ind]) - entropy)
+    }
+    # Mixture component weights.
+    q <- kl_hat
+    # Non-positives could occur due to numerical error. Apply a correction.
+    if (any(q <= 0)) {
+      # Should only affect the Laplace approximations.
+      if (any(which(q <= 0) <= params$n_shards)) stop("Non-positive KL divergence estimate detected for a partial posterior!")
+      # Add 1 standard error of the minimum. Keep doing this until there are no 
+      # non-positive.
+      while (any(q <= 0)) {
+        min.ind <- which.min(q)
+        min.se <- sd(-w.numerator[params$pp.inds == ind,,drop = FALSE]) / sqrt(params$Hvec[ind])
+        q <- q + min.se
+      }
+    }
+    q <- 1 / q
+    q <- q / sum(q)
+    # Take subsample from theta.
+    subsample.absolute_inds <- sample.int(ctx$H, size = subsample_size, prob = rep(q / params$Hvec, params$Hvec))
+    split_inds <- findInterval(subsample.absolute_inds, cumsum(c(0, params$Hvec[1:(length(params$Hvec) - 1)])) + 1)
+    subsample.inds <- split(subsample.absolute_inds, factor(split_inds, levels = 1:length(params$Hvec)))
+    if (laplace.type_1) theta <- c(theta, list(laplace.type_1.samples))
+    if (laplace.type_2) theta <- c(theta, list(laplace.type_2.samples))
+    if (laplace.type_3) theta <- c(theta, list(laplace.type_3.samples))
+    if (params$use_parallel) {
+      subsample.inds <- parallel::clusterMap(
+        par$par.clust,
+        fun = function(inds, Hi) {inds - Hi},
+        subsample.inds,
+        cumsum(c(0, params$Hvec[1:(length(params$Hvec) - 1)])),
+        SIMPLIFY = FALSE
+      )
+      subsamples <- parallel::clusterMap(
+        par$par.clust,
+        fun = function(th, inds) {th[inds,,drop = FALSE]},
+        theta,
+        subsample.inds,
+        SIMPLIFY = FALSE
+      )
+    } else if (forking) {
+      subsample.inds <- parallel::mcmapply(
+        FUN = function(inds, Hi) {inds - Hi},
+        subsample.inds,
+        cumsum(c(0, params$Hvec[1:(length(params$Hvec) - 1)])),
+        SIMPLIFY = FALSE,
+        mc.cores = ncores
+      )
+      subsamples <- parallel::mcmapply(
+        FUN = function(th, inds) {th[inds,,drop = FALSE]},
+        theta,
+        subsample.inds,
+        SIMPLIFY = FALSE,
+        mc.cores = ncores
+      )
+    } else {
+      subsample.inds <- mapply(
+        FUN = function(inds, Hi) {inds - Hi},
+        subsample.inds,
+        cumsum(c(0, params$Hvec[1:(length(params$Hvec) - 1)])),
+        SIMPLIFY = FALSE
+      )
+      subsamples <- mapply(
+        FUN = function(th, inds) {th[inds,,drop = FALSE]},
+        theta,
+        subsample.inds,
+        SIMPLIFY = FALSE
+      )
+    }
+    # Want this as a matrix.
+    w.sum_type_1 <- abind::abind(w.sum_type_1, along = 2)
+    # Need to weight each partial posterior density in ll.array by the mean of 
+    # the type 1 weights.
+    type_3.mix <- sweep(sweep(ll.array[subsample.absolute_inds,,,drop = FALSE], MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE), MARGIN = 3, STATS = log(q) - log(params$Hvec), FUN = "+", check.margin = FALSE)
+    type_3.mix <- lrowsums(type_3.mix, 3, drop. = TRUE)
+    w.type_3 <- matrix(w.numerator[subsample.absolute_inds,,drop = FALSE] - type_3.mix, subsample_size, dim(w.numerator)[2])
+    if (verbose) message("Done.")
+  
+    norm <- lemie.normalise(
+      w = w.type_3,
+      type = 3,
+      just_compute_constant = FALSE,
+      par.clust = par$par.clust,
+      forking = forking,
+      verbose = verbose
+    )
+    wn.type_3 <- norm$wn
   }
   
   ############################################################################
   # Output.
-  out <- list()
+  out <- list(params = params)
+  if (type == 3) {
+    out$subsamples <- subsamples
+    out$subsample.inds <- subsample.inds
+    if (keep.unnormalised) out$w.type_3 <- w.type_3
+    out$wn.type_3 <- wn.type_3
+    out$kl_hat <- kl_hat
+  }
   if (type == 2) {
     if (keep.unnormalised) out$w.type_2 <- w.type_2
     out$wn.type_2 <- wn.type_2
@@ -258,7 +513,10 @@ mopp.weights <- function(
     if (keep.unnormalised) out$w.type_1 <- w.type_1
     out$wn.type_1 <- wn.type_1
   }
-  out$Hvec <- Hvec
+  if (laplace.type_1) out$laplace.type_1.samples <- laplace.type_1.samples
+  if (laplace.type_2) out$laplace.type_2.samples <- laplace.type_2.samples
+  if (laplace.type_3) out$laplace.type_3.samples <- laplace.type_3.samples
+
   if (return.loglik) out$loglik <- loglik
   
   if (par$new) parallel::stopCluster(par$par.clust)
@@ -280,7 +538,8 @@ mopp.weights <- function(
 #' \item{\code{theta}}{A matrix of all samples from the partial posteriors, 
 #' pooled.}
 #' \item{H}{Total number of samples (rows of \code{theta}).}
-#' \item{\code{use_spark}}{Logical. \code{TRUE} if a Spark cluster is available.}
+#' \item{\code{use_spark}}{Logical. \code{TRUE} if a Spark cluster is 
+#' available.}
 #' \item{\code{loglik.fun}}{The log likelihood function.}
 #' \item{\code{args}}{A list of additional arguments to the log likelihood 
 #' function. This list can be empty.}
@@ -312,8 +571,8 @@ likelihood.worker <- function(df, context) {
 #' Monte Carlo estimate of the expectation of a univariate function
 #'
 #' Compute a Monte Carlo estimate of the expectation of a function of model 
-#' parameters. Samples of the parameter vector are weighted using the MoPP type 
-#' 1 or type 2 importance weights.
+#' parameters. Samples of the parameter vector are weighted using the LEMIE 
+#' type 1, 2 or 3 importance weights.
 #'
 #' \code{FUN} should take a matrix argument and return a matrix. The argument 
 #' matrix should be a matrix of samples, just like the elements of 
@@ -321,26 +580,27 @@ likelihood.worker <- function(df, context) {
 #' have the same number of rows. The rows of both matrices correspond to 
 #' samples.
 #'
-#' @seealso \code{mopp.quantile}, \code{mopp.weights}
+#' @seealso \code{lemie.quantile}, \code{lemie.weights}
 #'
 #' @param theta a list of matrices, each containing samples of model parameters 
 #' from partial posterior distributions. Each matrix should have the same 
 #' number of columns, which correspond to model parameters (including 
 #' components of parameter vectors). Each list element corresponds to a single 
 #' partial posterior.
-#' @param wn a list of matrices, each containing normalised weights, one for 
-#' each sample in \code{theta} and obtained using the 
-#' \code{\link{mopp.weights}} function.
+#' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+#' matrix (\code{type = 3}), each containing normalised weights, one for each 
+#' sample in \code{theta} and obtained using the \code{\link{lemie.weights}} 
+#' function.
 #' @param FUN a matrix-valued function that we wish to estimate the expected 
 #' value of. See details.
-#' @param type an integer, either 1 or 2, specifying the weighting type used.
+#' @param type an integer, either 1, 2 or 3, specifying the weighting type used.
 #' @param Hvec an optional vector specifying the number of samples taken from 
 #' each partial posterior.
 #'
 #' @return A vector of weighted sample means of \code{FUN}, approximating the 
 #' posterior expectation.
 #' @export
-mopp.mean <- function(
+lemie.mean <- function(
   theta,
   wn,
   FUN = identity,
@@ -348,10 +608,10 @@ mopp.mean <- function(
   Hvec = NULL
 ) {
   if (class(theta) != "list") stop("theta must be a list!")
-  if (class(wn) != "list") stop("wn must be a list!")
+  if (type != 3 && class(wn) != "list") stop("wn must be a list!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
-  if (any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
-  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
+  if (type != 3 && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (!(type %in% 1:3)) stop("type must be 1, 2 or 3!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
   
   # In type 1 we need to add the mixture distribution weights (these are already 
@@ -368,7 +628,7 @@ mopp.mean <- function(
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  wn <- abind::abind(wn, along = 1)
+  if (type != 3) wn <- abind::abind(wn, along = 1)
   
   # Positivisation:
   # The expectation is estimated as a weighted sum. This can be computed 
@@ -399,14 +659,14 @@ mopp.mean <- function(
 #'
 #' Compute a KDE estimate of the posterior density evaluated at a number of 
 #' values of a univariate random variable. The posterior is estimated with a 
-#' Monte Carlo sample weighted by the MoPP type 1 or type 2 importance weights.
+#' Monte Carlo sample weighted by the LEMIE type 1 or type 2 importance weights.
 #'
-#' The output of this function is the same as \code{mopp.mean} with a 
+#' The output of this function is the same as \code{lemie.mean} with a 
 #' \code{FUN} argument being a Gaussian kernel function, evaluated over a range 
 #' of values. This function is optimised to perform this without looping over 
 #' target values.
 #'
-#' @seealso \code{mopp.mkde}, \code{mopp.mean}, \code{mopp.weights}
+#' @seealso \code{lemie.mkde}, \code{lemie.mean}, \code{lemie.weights}
 #'
 #' @param x a vector of values for which the density estimate is to be computed.
 #' @param theta a list of matrices, each containing samples of model parameters 
@@ -414,14 +674,15 @@ mopp.mean <- function(
 #' number of columns, which correspond to model parameters (including 
 #' components of parameter vectors). Each list element corresponds to a single 
 #' partial posterior.
-#' @param wn a list of matrices, each containing normalised weights, one for 
-#' each sample in \code{theta} and obtained using the 
-#' \code{\link{mopp.weights}} function.
+#' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+#' matrix (\code{type = 3}), each containing normalised weights, one for each 
+#' sample in \code{theta} and obtained using the \code{\link{lemie.weights}} 
+#' function.
 #' @param bw the smoothing bandwidth to be used. The kernels are scaled such 
 #' that this is the standard deviation of the (Gaussian) smoothing kernel.
-#' @param type an integer, either 0, 1 or 2, specifying the weighting type 
-#' used. Types 1 and 2 refer to the MoPP weighting algorithms (see 
-#' \code{mopp.weights}). Type 0 can be used to use uniform weights, which 
+#' @param type an integer, either 0, 1, 2 or 3, specifying the weighting type 
+#' used. Types 1, 2 and 3 refer to the LEMIE weighting algorithms (see 
+#' \code{lemie.weights}). Type 0 can be used to use uniform weights, which 
 #' allows one to supply samples from another algorithm; in this case, \code{wn} 
 #' is not required.
 #' @param Hvec an optional vector specifying the number of samples taken from 
@@ -435,7 +696,7 @@ mopp.mean <- function(
 #'
 #' @return A vector the same length as \code{x} of density estimates.
 #' @export
-mopp.kde <- function(
+lemie.kde <- function(
   x,
   theta,
   wn,
@@ -446,10 +707,10 @@ mopp.kde <- function(
   mem.limit = 1024^3
 ) {
   if (class(theta) != "list") stop("theta must be a list!")
-  if (!(type %in% 0:2)) stop("type must be 0, 1 or 2!")
+  if (!(type %in% 0:3)) stop("type must be 0, 1, 2 or 3!")
+  if (!(type %in% c(0,3)) && class(wn) != "list") stop("wn must be a list!")
+  if (!(type %in% c(0,3)) && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
   if (type == 0) warning("Using uniform weights.")
-  if (type != 0 && class(wn) != "list") stop("wn must be a list!")
-  if (type != 0 && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
   if (bw <= 0) stop("bw must be positive!")
@@ -459,26 +720,27 @@ mopp.kde <- function(
   } else if (length(Hvec) != length(theta)) {
     stop("There should be one element of Hvec for each element of theta!")
   }
+  H <- as.numeric(sum(Hvec))
   
   # In type 1 we need to add the mixture distribution weights (these are already 
   # implicit in the type 2 weight definition).
   if (type == 1) {
-    l_mixture_weight <- log(Hvec) - log(sum(Hvec))
+    l_mixture_weight <- log(Hvec) - log(H)
     wn <- mapply(FUN = function(wi, m) {wi + m}, wn, l_mixture_weight, SIMPLIFY = FALSE)
   }
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  if (type != 0) {
+  if (!(type %in% c(0, 3))) {
     wn <- unlist(wn)
-  } else {
-    wn <- matrix(-log(H), H, 1)
+  } else if (type == 0) {
+    wn <- rep(-log(H), H)
   }
   
   n <- length(x)
   y <- rep(-Inf, n)
   buffer <- 1.5
-  mem.req <- (n + sum(Hvec) * n) * 8 * buffer
+  mem.req <- (n + H * n) * 8 * buffer
   n_chunks <- min(ceiling(mem.req / mem.limit), n)
   nk <- ceiling(n / n_chunks)
   for (k in 1:n_chunks) {
@@ -498,14 +760,14 @@ mopp.kde <- function(
 #'
 #' Compute a KDE estimate of the posterior density evaluated at a number of 
 #' values of a multivariate random variable. The posterior is estimated with a 
-#' Monte Carlo sample weighted by the MoPP type 1 or type 2 importance weights.
+#' Monte Carlo sample weighted by the LEMIE type 1 or type 2 importance weights.
 #'
-#' The output of this function is the same as \code{mopp.mean} with a 
+#' The output of this function is the same as \code{lemie.mean} with a 
 #' \code{FUN} argument being a multivariate Gaussian kernel function, evaluated 
 #' over a range of values. This function is optimised to perform this without 
 #' looping over target values.
 #'
-#' @seealso \code{mopp.kde}, \code{mopp.mean}, \code{mopp.weights}
+#' @seealso \code{lemie.kde}, \code{lemie.mean}, \code{lemie.weights}
 #'
 #' @param x a vector of values for which the density estimate is to be computed.
 #' @param theta a list of matrices, each containing samples of model parameters 
@@ -513,15 +775,16 @@ mopp.kde <- function(
 #' number of columns, which correspond to model parameters (including 
 #' components of parameter vectors). Each list element corresponds to a single 
 #' partial posterior.
-#' @param wn a list of matrices, each containing normalised weights, one for 
-#' each sample in \code{theta} and obtained using the 
-#' \code{\link{mopp.weights}} function.
+#' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+#' matrix (\code{type = 3}), each containing normalised weights, one for each 
+#' sample in \code{theta} and obtained using the \code{\link{lemie.weights}} 
+#' function.
 #' @param BW symmetric positive definite matrix, the smoothing bandwidth to be 
 #' used, as a covariance matrix. The kernels are scaled such that this is the 
 #' covariance matrix of the (multivariate Gaussian) smoothing kernel.
-#' @param type an integer, either 0, 1 or 2, specifying the weighting type 
-#' used. Types 1 and 2 refer to the MoPP weighting algorithms (see 
-#' \code{mopp.weights}). Type 0 can be used to use uniform weights, which 
+#' @param type an integer, either 0, 1, 2 or 3, specifying the weighting type 
+#' used. Types 1, 2 and 3 refer to the LEMIE weighting algorithms (see 
+#' \code{lemie.weights}). Type 0 can be used to use uniform weights, which 
 #' allows one to supply samples from another algorithm; in this case, \code{wn} 
 #' is not required.
 #' @param Hvec an optional vector specifying the number of samples taken from 
@@ -535,7 +798,7 @@ mopp.kde <- function(
 #'
 #' @return A vector the same length as \code{x} of density estimates.
 #' @export
-mopp.mkde <- function(
+lemie.mkde <- function(
   x,
   theta,
   wn,
@@ -545,11 +808,11 @@ mopp.mkde <- function(
   log. = FALSE,
   mem.limit = 1024^3
 ) {
-  if (class(theta) != "list") stop("theta must be a list!")
-  if (!(type %in% 0:2)) stop("type must be 0, 1 or 2!")
+  if (!(type %in% 0:3)) stop("type must be 0, 1, 2 or 3!")
+  if (!(type %in% c(0,3)) && class(wn) != "list") stop("wn must be a list!")
+  if (!(type %in% c(0,3)) && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
   if (type == 0) warning("Using uniform weights.")
-  if (type != 0 && class(wn) != "list") stop("wn must be a list!")
-  if (type != 0 && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (class(theta) != "list") stop("theta must be a list!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
   # Check BW is a symmetric positive definite matrix.
@@ -573,9 +836,9 @@ mopp.mkde <- function(
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  if (type != 0) {
+  if (!(type %in% c(0, 3))) {
     wn <- unlist(wn)
-  } else {
+  } else if (type == 0) {
     wn <- matrix(-log(H), H, 1)
   }
 
@@ -597,7 +860,7 @@ mopp.mkde <- function(
     x.dist <- matrix(sweep(theta.rep[1:length(chunk.inds),,,drop = FALSE], MARGIN = c(1,3), STATS = x[chunk.inds,,drop = FALSE], FUN = "-", check.margin = FALSE), length(chunk.inds) * H, d)
     #x.dist <- t(BW.prec %*% t(matrix(sweep(theta.rep[1:length(chunk.inds),,,drop = FALSE], MARGIN = c(1,3), STATS = x[chunk.inds,,drop = FALSE], FUN = "-", check.margin = FALSE), length(chunk.inds) * H, d)))
     f <- sweep(
-      matrix(mvtnorm::dmvnorm(x.dist, sigma = BW, log = TRUE, checkSymmetry = FALSE), length(chunk.inds), H),
+      matrix(dmnorm(x.dist, sigma = BW, log = TRUE), length(chunk.inds), H),
       #matrix(mvtnorm::dmvnorm(x.dist, log = TRUE, checkSymmetry = FALSE), length(chunk.inds), H),
       MARGIN = 2,
       STATS = c(wn),
@@ -616,8 +879,8 @@ mopp.mkde <- function(
 #' Monte Carlo estimate of a quantile of a univariate function
 #'
 #' Compute a Monte Carlo estimate of quantiles of a function of model 
-#' parameters. Samples of the parameter vector are weighted using the MoPP type 
-#' 1 or type 2 importance weights.
+#' parameters. Samples of the parameter vector are weighted using the LEMIE 
+#' type 1 or type 2 importance weights.
 #'
 #' Whilst \code{FUN} is matrix-valued, with possibly >1 columns, the estimated 
 #' quantiles returned are quantiles of each dimension of the function 
@@ -629,7 +892,7 @@ mopp.mkde <- function(
 #' have the same number of rows. The rows of both matrices correspond to 
 #' samples.
 #'
-#' @seealso \code{mopp.mean}, \code{mopp.weights}
+#' @seealso \code{lemie.mean}, \code{lemie.weights}
 #'
 #' @param theta a list of matrices, each containing samples of model parameters 
 #' from partial posterior distributions. Each matrix should have the same 
@@ -638,12 +901,13 @@ mopp.mkde <- function(
 #' partial posterior.
 #' @param prob a probability, in [0, 1], corresponding to the quantile of 
 #' \code{FUN} to be estimated.
-#' @param wn a list of matrices, each containing normalised weights, one for 
-#' each sample in \code{theta} and obtained using the 
-#' \code{\link{mopp.weights}} function.
+#' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+#' matrix (\code{type = 3}), each containing normalised weights, one for each 
+#' sample in \code{theta} and obtained using the \code{\link{lemie.weights}} 
+#' function.
 #' @param FUN a matrix-valued function that we wish to estimate the expected 
 #' value of. See details.
-#' @param type an integer, either 1 or 2, specifying the weighting type used.
+#' @param type an integer, either 1, 2 or 3, specifying the weighting type used.
 #' @param tol a number specifying the tolerance level for convergence of 
 #' numerical root finding. See \code{\link{uniroot}} for details.
 #' @param Hvec an optional vector specifying the number of samples taken from 
@@ -653,7 +917,7 @@ mopp.mkde <- function(
 #' \code{\link{uniroot}}, the first row of which contains the weighted 
 #' quantiles of \code{FUN}.
 #' @export
-mopp.quantile <- function(
+lemie.quantile <- function(
   theta,
   prob,
   wn,
@@ -663,10 +927,10 @@ mopp.quantile <- function(
   Hvec = NULL
 ) {
   if (class(theta) != "list") stop("theta must be a list!")
-  if (class(wn) != "list") stop("wn must be a list!")
+  if (type != 3 && class(wn) != "list") stop("wn must be a list!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
-  if (any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
-  if (!(type %in% 1:2)) stop("type must be 1 or 2!")
+  if (type != 3 && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (!(type %in% 1:3)) stop("type must be 1, 2 or 3!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
   
   # In type 1 we need to add the mixture distribution weights (these are already 
@@ -683,7 +947,7 @@ mopp.quantile <- function(
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  wn <- abind::abind(wn, along = 1)
+  if (type != 3) wn <- abind::abind(wn, along = 1)
 
   # Check dimension of function output.
   d <- ncol(FUN(theta[1,,drop = FALSE]))
@@ -716,52 +980,65 @@ mopp.quantile <- function(
   return(q.hat)
 }
 
-#' Normalise MoPP weights
+#' Normalise LEMIE weights
 #'
-#' Performs the self-normalisation of the importance weights in MoPP, necessary 
-#' for estimating posterior expectations with the weighted samples from partial 
-#' posteriors.
+#' Performs the self-normalisation of the importance weights in LEMIE, 
+#' necessary for estimating posterior expectations with the weighted samples 
+#' from partial posteriors.
 #'
-#' Weight normalisation is done differently for the two versions of MoPP, as 
+#' Weight normalisation is done differently for the two versions of LEMIE, as 
 #' specified by the \code{type} argument.
 #'
 #' The type 1 weights will be normalised relative to the partial posterior from 
 #' which the corresponding samples were drawn. This means if there are $M$ 
 #' partial posteriors, the sum of the normalised weights will be $M$.
 #'
-#' @param w either a single column matrix, if \code{type = 2}, or a list of 
-#' single column matrices, if \code{type = 1}, containing the unnormalised MoPP 
-#' weights on the log scale.
-#' @param type an integer, either 1 or 2, specifying the weighting type used. 
+#' @param w either a single column matrix, if \code{type = 2} or 
+#' \code{type = 3}, or a list of single column matrices, if \code{type = 1}, 
+#' containing the unnormalised LEMIE weights on the log scale.
+#' @param type an integer, either 1, 2 or 3, specifying the weighting type used.
 #' @param pp.inds integer vector, required for type 2 if \code{as.list} is 
 #' \code{TRUE} (default), with one element for each row of \code{w}: the index 
 #' of the partial posterior the corresponding sample is from.
 #' @param just_compute_constant Logical. If \code{TRUE}, only the normalising 
 #' constant(s) will be computed and returned - not the normalised weights.
+#' @param as.list logical. If \code{TRUE} the normalised type 2 weights will be 
+#' returned as a list, split according to \code{pp.inds}.
 #' @param par.clust an optional cluster connection object from package 
 #' \code{parallel}.
+#' @param forking logical. If \code{TRUE}, use forking functions 
+#' \code{\link[parallel]{mclapply}}, \code{\link[parallel]{mcmapply}}. Does not 
+#' work on Windows.
+#' @param ncores an optional integer specifying the number of CPU cores to use 
+#' (see \code{\link[parallel]{makeCluster}}). The default, 1, signifies that 
+#' \code{parallel} will not be used.
 #' @return A list containing fields:
 #' \item{wn}{A list of single column matrices, if \code{type = 1}, containing 
-#' the normalised MoPP weights on the log scale. If \code{as.list} is 
+#' the normalised LEMIE weights on the log scale. If \code{as.list} is 
 #' \code{FALSE} and \code{type} is 2, these will be returned as a single 
-#' matrix.}
-#' \item{w.sum}{Either a numeric, if \code{type = 2}, or a list of numerics, if 
-#' \code{type = 1}, reporting the normalising constants used (log scale).}
+#' matrix. If \code{type}, a single column matrix.}
+#' \item{w.sum}{Either a numeric, if \code{type = 2} or \code{type = 3}, or a 
+#' list of numerics, if \code{type = 1}, reporting the normalising constants 
+#' used (log scale).}
 #'
 #' @export
-mopp.normalise <- function(
+lemie.normalise <- function(
   w,
   type,
   pp.inds = NULL,
   just_compute_constant = FALSE,
   as.list = TRUE,
   par.clust = NULL,
+  forking = FALSE,
+  ncores = 1,
   verbose = FALSE
 ) {
   if (type == 1) {
     if (verbose) message("Computing type 1 weights' normalising constants...")
     if (!is.null(par.clust)) {
       w.sum <- parallel::parLapply(par.clust, w, fun = function(ww) {lrowsums(ww, 1)})
+    } else if (forking) {
+      w.sum <- parallel::mclapply(w, FUN = function(ww) {lrowsums(ww, 1)}, mc.cores = ncores)
     } else {
       w.sum <- lapply(w, FUN = function(ww) {lrowsums(ww, 1)})
     }
@@ -780,22 +1057,30 @@ mopp.normalise <- function(
             w.sum,
             SIMPLIFY = FALSE
           )
+      } else if (forking) {
+        wn <- parallel::mcmapply(
+            FUN = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)},
+            w,
+            w.sum,
+            SIMPLIFY = FALSE,
+            mc.cores = ncores
+          )
       } else {
         wn <- mapply(FUN = function(ww, ws) {sweep(ww, STATS = ws, MARGIN = 2, FUN = "-", check.margin = FALSE)}, w, w.sum, SIMPLIFY = FALSE)
       }
       if (verbose) message("Done.")
     } else {wn <- NULL}
 
-  } else if (type == 2) {
+  } else if (type %in% 2:3) {
     # Normalisation for type 2 is relative to whole sample.
-    if (verbose) message("Computing type 2 normalising constants...")
+    if (verbose) message(paste0("Computing type ", type, " normalising constants..."))
     w.sum <- lrowsums(w, 1)
-    if (any(!is.finite(w.sum))) message("Sum of type 2 weights is zero. NaN returned for normalised weights.")
+    if (any(!is.finite(w.sum))) message(paste0("Sum of type ", type, " weights is zero. NaN returned for normalised weights."))
     if (verbose) message("Done.")
     if (!just_compute_constant) {
-      if (verbose) message("Normalising type 2 weights...")
+      if (verbose) message(paste("Normalising type ", type, " weights..."))
       wn <- sweep(w, STATS = w.sum, MARGIN = 2, FUN = "-", check.margin = FALSE)
-      if (as.list) {
+      if (type == 2 && as.list) {
         # Split only preserves dimensions on data.frames, so convert to df first.
         wn <- split(as.data.frame(wn), pp.inds)
         wn <- lapply(wn, as.matrix)
@@ -805,14 +1090,14 @@ mopp.normalise <- function(
       if (verbose) message("Done.")
     } else {wn <- NULL}
 
-  } else {stop("type must be 1 or 2!")}
+  } else {stop("type must be 1, 2 or 3!")}
 
   return(list(wn = wn, w.sum = w.sum))
 }
 
 
 
-#' Smooth the MoPP weights using the generalised Pareto distribution
+#' Smooth the LEMIE weights using the generalised Pareto distribution
 #'
 #' @section References:
 #' \itemize{

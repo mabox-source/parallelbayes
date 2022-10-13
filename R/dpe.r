@@ -74,8 +74,11 @@ dpe.master <- function(
     # covariance matrix, use the variances only as suggested by Scott et al 
     # 2016.
     cov_used.partial <- sapply(worker.cov, rcond) > cov.tol
+    worker.prec <- worker.cov
+    if (any(!cov_used.partial)) worker.prec[!cov_used.partial] <- lapply(worker.cov[!cov_used.partial], FUN = function(w) {diag(1 / diag(w))})
     if (any(!cov_used.partial)) worker.cov[!cov_used.partial] <- lapply(worker.cov[!cov_used.partial], FUN = function(w) {diag(diag(w))})
-    worker.prec <- lapply(worker.cov, solve)
+    if (any(cov_used.partial)) worker.prec[cov_used.partial] <- lapply(worker.cov[cov_used.partial], solve)
+#    worker.prec <- lapply(worker.cov, solve)
     cov_used.pooled <- TRUE
   }
 
@@ -112,10 +115,14 @@ dpe.master <- function(
       # covariance matrix, use the variances only as suggested by Scott et al 
       # 2016.
       if (rcond(consensus.prec) <= cov.tol) {
-        w.pooled <- diag(diag(consensus.prec))
         cov_used.pooled <- FALSE
       } else {cov_used.pooled <- TRUE}
-      consensus.cov <- solve(consensus.prec)
+      if (cov_used.pooled) {
+        consensus.cov <- solve(consensus.prec)
+      } else {
+        consensus.cov <- diag(1 / diag(consensus.prec))
+        consensus.prec <- diag(diag(consensus.prec))
+      }
       consensus.mean <- consensus.cov %*% rowSums(abind::abind(
         mapply(
           FUN = function(a, b) {b %*% a},
@@ -132,7 +139,7 @@ dpe.master <- function(
     component <- abind::abind(mapply(function(th, ind) {th[ind,]}, theta[subsets[[k]]], component.inds, SIMPLIFY = FALSE), along = 2)
     component.cov <- calc_covariance(d, bw.vec[1], subset.size, consensus.prec, use_sdpe)
     component.mean <- calc_mean(component, d, subset.size, component.cov, bw.vec[1], consensus.prec, consensus.mean, use_sdpe)
-    component.w <- calc_weight(component, component.mean, bw.vec[1], d, subset.size, worker.mean[subsets[[k]]], worker.cov[subsets[[k]]], consensus.prec, consensus.mean, use_sdpe)
+    component.w <- calc_weight(component, component.mean, bw.vec[1], d, subset.size, worker.mean[subsets[[k]]], worker.cov[subsets[[k]]], worker.prec[subsets[[k]]], consensus.cov, consensus.mean, use_sdpe, cov_used.pooled)
 
     # MCMC iterations.
     for (h in 1:H) {
@@ -145,7 +152,7 @@ dpe.master <- function(
         proposal.inds[i] <- ceiling(runif(1) * H)
         proposal <- abind::abind(mapply(function(th, ind) {th[ind,]}, theta[subsets[[k]]], proposal.inds, SIMPLIFY = FALSE), along = 2)
         proposal.mean <- calc_mean(proposal, d, subset.size, component.cov, bw.vec[h], consensus.prec, consensus.mean, use_sdpe)
-        proposal.w <- calc_weight(proposal, proposal.mean, bw.vec[h], d, subset.size, worker.mean[subsets[[k]]], worker.cov[subsets[[k]]], consensus.prec, consensus.mean, use_sdpe)
+        proposal.w <- calc_weight(proposal, proposal.mean, bw.vec[h], d, subset.size, worker.mean[subsets[[k]]], worker.cov[subsets[[k]]], worker.prec[subsets[[k]]], consensus.cov, consensus.mean, use_sdpe, cov_used.pooled)
 
         # Check if proposal accepted.
         u <- log(runif(1))
@@ -212,21 +219,27 @@ calc_mean <- function(theta, D, K, S, bw, consensus.prec, consensus.mean, use_sd
   # S: the component covariance found using calc_covariance().
   theta.mean <- .rowMeans(theta, D, K)
   if (use_sdpe) {
-    S %*% (K / bw ^ 2 * theta.mean + consensus.prec %*% consensus.mean)
+    out <- S %*% (K / bw ^ 2 * theta.mean + consensus.prec %*% consensus.mean)
+    return(out)
   } else {
     theta.mean
   }
 }
-calc_weight <- function(theta, component.mean, bw, D, K, worker.mean, worker.cov, consensus.cov, consensus.mean, use_sdpe) {
+calc_weight <- function(theta, component.mean, bw, D, K, worker.mean, worker.cov, worker.prec, consensus.cov, consensus.mean, use_sdpe, cov_used.pooled) {
   # theta: D by K matrix of parameter samples (dimension D) from each 
   # partial posterior sampler (K).
   if (use_sdpe) {
     theta.mean <- .rowMeans(theta, D, K)
     w.ndpe <- calc_ndpe_weight(theta, theta.mean, bw)
-    dens.mean <- mvtnorm::dmvnorm(theta.mean, consensus.mean, consensus.cov + bw ^ 2 / K * diag(D), log = TRUE)
+    if (cov_used.pooled) {
+      consensus.prec <- solve(consensus.cov + bw ^ 2 / K * diag(D))
+    } else {
+      consensus.prec <- diag(1 / (diag(consensus.cov) + bw ^ 2 / K * D))
+    }
+    dens.mean <- dmnorm(theta.mean, consensus.mean, consensus.cov + bw ^ 2 / K * diag(D), prec = consensus.prec, log = TRUE)
     denom <- 0
     for (k in 1:K) {
-      denom <- denom + mvtnorm::dmvnorm(theta[,k], worker.mean[[k]], worker.cov[[k]], log = TRUE)
+      denom <- denom + dmnorm(theta[,k], worker.mean[[k]], worker.cov[[k]], prec = worker.prec[[k]], log = TRUE)
     }
     w.ndpe + dens.mean - denom
   } else {

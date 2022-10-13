@@ -48,6 +48,9 @@
 #' \code{FALSE}.
 #' @param par.clust an optional cluster connection object from package 
 #' \code{parallel}. Ignored if \code{theta} is a Spark table.
+#' @param forking logical. If \code{TRUE}, use forking functions 
+#' \code{\link[parallel]{mclapply}}, \code{\link[parallel]{mcmapply}}. Does not 
+#' work on Windows.
 #' @param ncores an optional integer specifying the number of CPU cores to use 
 #' (see \code{\link[parallel]{makeCluster}}). The default, 1, signifies that 
 #' \code{parallel} will not be used.
@@ -56,7 +59,10 @@
 #' ignored. See details.
 #'
 #' @return  A list containing fields:
-#' \item{w}{A list of weighting matrices used.}
+#' \item{w}{A list of weighting matrices used (covariance matrices if 
+#' \code{type = 2}.}
+#' \item{w.pooled}{The pooled weighting matrix (covariance matrix if 
+#' \code{type = 2}.}
 #' \item{cov_used.partial}{Diagnostics (see Details).}
 #' \item{cov_used.pooled}{Diagnostics (see Details).}
 #' \item{theta.w.pooled}{A matrix of pooled, weighted samples if 
@@ -72,6 +78,7 @@ consensus.weights <- function(
   correct.bias = FALSE,
   alpha = 0.2,
   par.clust = NULL,
+  forking = FALSE,
   ncores = 1,
   cov.tol = .Machine$double.eps
 ) {
@@ -87,7 +94,7 @@ consensus.weights <- function(
     use_spark <- FALSE
   }
   if (any(Hvec != Hvec[1])) stop("Each set of samples must have the same number of realisations!")
-  if (!use_spark) par <- parallel.start(par.clust, ncores) 
+  if (!use_spark) par <- parallel.start(par.clust, ncores, forking) 
 
   # First derive weights.
 
@@ -105,6 +112,9 @@ consensus.weights <- function(
   } else if (par$valid) {
     w <- parallel::parLapply(par.clust, theta, consensus.worker, context = ctx)
     if (any(sapply(w, function(wi) {is.na(wi[,1])}))) stop("Insufficient useable samples!")
+  } else if (forking) {
+    w <- parallel::mclapply(theta, FUN = consensus.worker, context = ctx, mc.cores = ncores)
+    if (any(sapply(w, function(wi) {is.na(wi[,1])}))) stop("Insufficient useable samples!")
   } else {
     w <- lapply(theta, consensus.worker, ctx)
     if (any(sapply(w, function(wi) {is.na(wi[,1])}))) stop("Insufficient useable samples!")
@@ -118,11 +128,16 @@ consensus.weights <- function(
     # Check reciprocal condition number. If it suggests we cannot invert w, use 
     # the variances only as suggested by Scott et al 2016.
     if (rcond(w.pooled) <= cov.tol) {
-      w.pooled <- diag(diag(w.pooled))
+      w.pooled <- diag(1 / diag(w.pooled))
       cov_used.pooled <- FALSE
-    } else {cov_used.pooled <- TRUE}
-  } else {cov_used.pooled <- FALSE}
-  w.pooled <- solve(w.pooled)
+    } else {
+      cov_used.pooled <- TRUE
+      w.pooled <- solve(w.pooled)
+    }
+  } else {
+    cov_used.pooled <- FALSE
+    w.pooled <- solve(w.pooled)
+  }
 
   # Weight the samples.
 
@@ -179,6 +194,7 @@ consensus.weights <- function(
         type = type,
         return.pooled = TRUE,
         par.clust = par.clust,
+        forking = forking,
         ncores = ncores,
         cov.tol = cov.tol
       )$theta.w.pooled
@@ -187,6 +203,7 @@ consensus.weights <- function(
 
   out <- list(
     w = w,
+    w.pooled = w.pooled,
     cov_used.partial = cov_used.partial,
     cov_used.pooled = cov_used.pooled
   )
@@ -248,8 +265,9 @@ consensus.worker <- function(df, context) {
     # Check reciprocal condition number. If it suggests we cannot invert v, 
     # ignore the covariances as suggest by Scott et al 2016.
     is_well_conditioned <- rcond(v) > context$tol
-    if (!is_well_conditioned) v <- diag(diag(v))
-    v <- solve(v)
+    if (!is_well_conditioned) {
+      v <- diag(1 / diag(v))
+    } else {v <- solve(v)}
 
   # Equal weighting.
   } else {
@@ -295,6 +313,7 @@ consensus.bias_correction <- function(
   type = 2,
   return.pooled = FALSE,
   par.clust = NULL,
+  forking = FALSE,
   ncores = 1,
   cov.tol = .Machine$double.eps
 ) {
@@ -304,6 +323,7 @@ consensus.bias_correction <- function(
     type = type,
     return.pooled = TRUE,
     par.clust = par.clust,
+    forking = forking,
     ncores = ncores,
     cov.tol = cov.tol
   )$theta.w.pooled

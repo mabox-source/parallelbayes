@@ -76,6 +76,6 @@ on the cluster.
 
 ## References
 
-<a id="1">[1]</a> Box, M. (2022). Importance Sampling Methods for Bayesian Inference with Partitioned Data. *arXiv preprint arXiv:2210.06620*.
-<a id="2">[2]</a> Scott, S. L., Blocker, A. W., Bonassi, F. V., Chipman, H. A., George, E. I., and McCulloch, R. E. (2016). Bayes and big data: The consensus monte carlo algorithm. *International Journal of Management Science and Engineering Management*, 11(2):78–88.
-<a id="3">[3]</a> Neiswanger, W., Wang, C., and Xing, E. (2013). Asymptotically exact, embarrassingly parallel mcmc. *arXiv preprint arXiv:1311.4780*.
+<a id="1">[1]</a> Box, M. (2022). Importance Sampling Methods for Bayesian Inference with Partitioned Data. *arXiv preprint arXiv:2210.06620*.<br/>
+<a id="2">[2]</a> Scott, S. L., Blocker, A. W., Bonassi, F. V., Chipman, H. A., George, E. I., and McCulloch, R. E. (2016). Bayes and big data: The consensus monte carlo algorithm. *International Journal of Management Science and Engineering Management*, 11(2):78–88.<br/>
+<a id="3">[3]</a> Neiswanger, W., Wang, C., and Xing, E. (2013). Asymptotically exact, embarrassingly parallel mcmc. *arXiv preprint arXiv:1311.4780*.<br/>

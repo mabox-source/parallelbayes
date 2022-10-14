@@ -1,5 +1,27 @@
 # parallelbayes
 
+This package implements the Laplace enriched multiple importance estimator of 
+[[1]](#1). This is an importance weighting scheme for Monte Carlo estimation of 
+posterior expectations using samples drawn from multiple proposal 
+distributions. The idea is that this be used to reconstruct posterior inference 
+when the data are partitioned and a sampling algorithm, such as MCMC, was used 
+to target the local posteriors conditioned on parts of data.
+
+Also implemented are the consensus Monte Carlo algorithm of [[2]](#2) and the 
+NDPE and SDPE algorithms of [[3]](#3),
+
+
+## Installation
+
+The latest version can be installed from GitHub by cloning the repository and 
+using the `devtools` package, or by using the `remotes` package:
+
+```
+install.packages("remotes")
+remotes::install_github("mabox-source/parallelbayes")
+```
+
+
 ## Notes
 
 * `lemie.weights` will return type 1 weights AND type 2 weights, if requested 
@@ -50,3 +72,10 @@ config$spark.executor.instances <- M
 
 is not sufficient. The configs required in local mode are different from those 
 on the cluster.
+
+
+## References
+
+<a id="1">[1]</a> Box, M. (2022). Importance Sampling Methods for Bayesian Inference with Partitioned Data. *arXiv preprint arXiv:2210.06620*.
+<a id="2">[2]</a> Scott, S. L., Blocker, A. W., Bonassi, F. V., Chipman, H. A., George, E. I., and McCulloch, R. E. (2016). Bayes and big data: The consensus monte carlo algorithm. *International Journal of Management Science and Engineering Management*, 11(2):78–88.
+<a id="3">[3]</a> Neiswanger, W., Wang, C., and Xing, E. (2013). Asymptotically exact, embarrassingly parallel mcmc. *arXiv preprint arXiv:1311.4780*.

@@ -52,6 +52,7 @@
 #'
 #' @section References:
 #' \itemize{
+#' \item{Box, M., 2022. Importance Sampling Methods for Bayesian Inference with Partitioned Data. \emph{arXiv preprint arXiv:2210.06620.}}
 #' \item{Scott, Steven L., Blocker, A.W., Bonassi, F.V., Chipman, H.A., George, E.I. and McCulloch, R.E., 2016. Bayes and big data: The consensus Monte Carlo algorithm. \emph{International Journal of Management Science and Engineering Management}, 11(2), pp.78-88.}
 #' }
 #'
@@ -352,16 +353,13 @@ lemie.weights <- function(
   # Type 2 weights.
   if (type == 2) {
     if (verbose) message("Computing type 2 weights...")
-    # Mixture component weights.
-    q <- params$Hvec / ctx$H
     # Want this as a matrix for type 2 calculations.
     w.sum_type_1 <- abind::abind(w.sum_type_1, along = 2)
     # Need to weight each partial posterior density in ll.array by the mean of 
-    # the type 1 weights, and the component weights.
-    type_2.mix <- sweep(sweep(ll.array, MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE), MARGIN = 3, STATS = log(q) - log(params$Hvec), FUN = "+", check.margin = FALSE)
-    #type_2.mix <- sweep(ll.array, MARGIN = 2:3, STATS = w.mean_type_1, FUN = "+", check.margin = FALSE) - log(ctx$H)
+    # the type 1 weights.
+    type_2.mix <- sweep(sweep(ll.array, MARGIN = 2:3, STATS = w.sum_type_1, FUN = "+", check.margin = FALSE), MARGIN = 3, STATS = log(params$Hvec), FUN = "-", check.margin = FALSE)
     type_2.mix <- lrowsums(type_2.mix, 3, drop. = TRUE)
-    w.type_2 <- matrix(w.numerator - type_2.mix, dim(w.numerator)[1], dim(w.numerator)[2]) - log(ctx$H)
+    w.type_2 <- matrix(w.numerator - type_2.mix, dim(w.numerator)[1], dim(w.numerator)[2])
     if (verbose) message("Done.")
   
     norm <- lemie.normalise(
@@ -587,13 +585,14 @@ likelihood.worker <- function(df, context) {
 #' number of columns, which correspond to model parameters (including 
 #' components of parameter vectors). Each list element corresponds to a single 
 #' partial posterior.
-#' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
-#' matrix (\code{type = 3}), each containing normalised weights, one for each 
+#' @param w a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+#' matrix (\code{type = 3}), each containing importance weights, one for each 
 #' sample in \code{theta} and obtained using the \code{\link{lemie.weights}} 
 #' function.
 #' @param FUN a matrix-valued function that we wish to estimate the expected 
 #' value of. See details.
 #' @param type an integer, either 1, 2 or 3, specifying the weighting type used.
+#' @param normalised logical. Are the weights self-normalised?
 #' @param Hvec an optional vector specifying the number of samples taken from 
 #' each partial posterior.
 #'
@@ -602,33 +601,39 @@ likelihood.worker <- function(df, context) {
 #' @export
 lemie.mean <- function(
   theta,
-  wn,
+  w,
   FUN = identity,
   type = 2,
+  normalised = TRUE,
   Hvec = NULL
 ) {
   if (class(theta) != "list") stop("theta must be a list!")
-  if (type != 3 && class(wn) != "list") stop("wn must be a list!")
+  if (type != 3 && class(w) != "list") stop("w must be a list!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
-  if (type != 3 && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (type != 3 && any(sapply(w, class) != "matrix")) stop("w must be a list of matrices!")
   if (!(type %in% 1:3)) stop("type must be 1, 2 or 3!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
   
-  # In type 1 we need to add the mixture distribution weights (these are already 
-  # implicit in the type 2 weight definition).
+  # Different types use different divisors in the estimator. Include these 
+  # divisors in the weights.
+  if (is.null(Hvec)) {
+    Hvec <- sapply(theta, nrow)
+  } else if (length(Hvec) != length(theta)) {
+    stop("There should be one element of Hvec for each element of theta!")
+  }
+  H <- as.numeric(sum(Hvec))
   if (type == 1) {
-    if (is.null(Hvec)) {
-      Hvec <- sapply(theta, nrow)
-    } else if (length(Hvec) != length(theta)) {
-      stop("There should be one element of Hvec for each element of theta!")
-    }
-    l_mixture_weight <- log(Hvec) - log(sum(Hvec))
-    wn <- mapply(FUN = function(wi, m) {wi + m}, wn, l_mixture_weight, SIMPLIFY = FALSE)
+    l_mixture_weight <- log(Hvec) - log(H)
+    w <- mapply(FUN = function(wi, m) {wi + m}, w, l_mixture_weight, SIMPLIFY = FALSE)
+  } else if (type == 2 && !normalised) {
+    w <- lapply(w, FUN = function(wi) {wi - log(H)})
+  } else if (type == 3 && !normalised) {
+    w <- w - log(H)
   }
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  if (type != 3) wn <- abind::abind(wn, along = 1)
+  if (type != 3) w <- abind::abind(w, along = 1)
   
   # Positivisation:
   # The expectation is estimated as a weighted sum. This can be computed 
@@ -642,12 +647,12 @@ lemie.mean <- function(
   for (j in 1:d) {
     if (any(negatives[,j])) {
       mu.hat[j] <- -exp(lrowsums(
-          log(FUN(-theta[negatives[,j],,drop = FALSE])[,j]) + wn[negatives[,j]]
+          log(FUN(-theta[negatives[,j],,drop = FALSE])[,j]) + w[negatives[,j]]
       ))
     } else {mu.hat[j] <- 0}
     if (any(!negatives[,j])) {
       mu.hat[j] <- mu.hat[j] + exp(lrowsums(
-          log(FUN(theta[!negatives[,j],,drop = FALSE])[,j]) + wn[!negatives[,j]]
+          log(FUN(theta[!negatives[,j],,drop = FALSE])[,j]) + w[!negatives[,j]]
       ))
     }
   }
@@ -674,8 +679,8 @@ lemie.mean <- function(
 #' number of columns, which correspond to model parameters (including 
 #' components of parameter vectors). Each list element corresponds to a single 
 #' partial posterior.
-#' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
-#' matrix (\code{type = 3}), each containing normalised weights, one for each 
+#' @param w a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+#' matrix (\code{type = 3}), each containing importance weights, one for each 
 #' sample in \code{theta} and obtained using the \code{\link{lemie.weights}} 
 #' function.
 #' @param bw the smoothing bandwidth to be used. The kernels are scaled such 
@@ -683,8 +688,9 @@ lemie.mean <- function(
 #' @param type an integer, either 0, 1, 2 or 3, specifying the weighting type 
 #' used. Types 1, 2 and 3 refer to the LEMIE weighting algorithms (see 
 #' \code{lemie.weights}). Type 0 can be used to use uniform weights, which 
-#' allows one to supply samples from another algorithm; in this case, \code{wn} 
+#' allows one to supply samples from another algorithm; in this case, \code{w} 
 #' is not required.
+#' @param normalised logical. Are the weights self-normalised?
 #' @param Hvec an optional vector specifying the number of samples taken from 
 #' each partial posterior.
 #' @param log. logical. If \code{TRUE}, density estimates are returned on the 
@@ -699,17 +705,18 @@ lemie.mean <- function(
 lemie.kde <- function(
   x,
   theta,
-  wn,
+  w,
   bw,
   type = 2,
+  normalised = TRUE,
   Hvec = NULL,
   log. = FALSE,
   mem.limit = 1024^3
 ) {
   if (class(theta) != "list") stop("theta must be a list!")
   if (!(type %in% 0:3)) stop("type must be 0, 1, 2 or 3!")
-  if (!(type %in% c(0,3)) && class(wn) != "list") stop("wn must be a list!")
-  if (!(type %in% c(0,3)) && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (!(type %in% c(0,3)) && class(w) != "list") stop("w must be a list!")
+  if (!(type %in% c(0,3)) && any(sapply(w, class) != "matrix")) stop("w must be a list of matrices!")
   if (type == 0) warning("Using uniform weights.")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
@@ -722,19 +729,23 @@ lemie.kde <- function(
   }
   H <- as.numeric(sum(Hvec))
   
-  # In type 1 we need to add the mixture distribution weights (these are already 
-  # implicit in the type 2 weight definition).
+  # Different types use different divisors in the estimator. Include these 
+  # divisors in the weights.
   if (type == 1) {
     l_mixture_weight <- log(Hvec) - log(H)
-    wn <- mapply(FUN = function(wi, m) {wi + m}, wn, l_mixture_weight, SIMPLIFY = FALSE)
+    w <- mapply(FUN = function(wi, m) {wi + m}, w, l_mixture_weight, SIMPLIFY = FALSE)
+  } else if (type == 2 && !normalised) {
+    w <- lapply(w, FUN = function(wi) {wi - log(H)})
+  } else if (type == 3 && !normalised) {
+    w <- w - log(H)
   }
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
   if (!(type %in% c(0, 3))) {
-    wn <- unlist(wn)
+    w <- unlist(w)
   } else if (type == 0) {
-    wn <- rep(-log(H), H)
+    w <- rep(-log(H), H)
   }
   
   n <- length(x)
@@ -747,7 +758,7 @@ lemie.kde <- function(
     if ((k - 1) * nk + 1 > n) break
     chunk.inds <- ((k - 1) * nk + 1):min(k * nk, n)
     f <- outer(theta, x[chunk.inds], FUN = "-") / bw
-    y[chunk.inds] <- lrowsums(-f ^ 2 / 2 + wn)
+    y[chunk.inds] <- lrowsums(-f ^ 2 / 2 + w)
   }
   y <- y - (1 / 2) * log(2 * pi) - log(bw)
 
@@ -775,8 +786,8 @@ lemie.kde <- function(
 #' number of columns, which correspond to model parameters (including 
 #' components of parameter vectors). Each list element corresponds to a single 
 #' partial posterior.
-#' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
-#' matrix (\code{type = 3}), each containing normalised weights, one for each 
+#' @param w a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+#' matrix (\code{type = 3}), each containing importance weights, one for each 
 #' sample in \code{theta} and obtained using the \code{\link{lemie.weights}} 
 #' function.
 #' @param BW symmetric positive definite matrix, the smoothing bandwidth to be 
@@ -785,8 +796,9 @@ lemie.kde <- function(
 #' @param type an integer, either 0, 1, 2 or 3, specifying the weighting type 
 #' used. Types 1, 2 and 3 refer to the LEMIE weighting algorithms (see 
 #' \code{lemie.weights}). Type 0 can be used to use uniform weights, which 
-#' allows one to supply samples from another algorithm; in this case, \code{wn} 
+#' allows one to supply samples from another algorithm; in this case, \code{w} 
 #' is not required.
+#' @param normalised logical. Are the weights self-normalised?
 #' @param Hvec an optional vector specifying the number of samples taken from 
 #' each partial posterior.
 #' @param log. logical. If \code{TRUE}, density estimates are returned on the 
@@ -801,16 +813,17 @@ lemie.kde <- function(
 lemie.mkde <- function(
   x,
   theta,
-  wn,
+  w,
   BW,
   type = 2,
+  normalised = TRUE,
   Hvec = NULL,
   log. = FALSE,
   mem.limit = 1024^3
 ) {
   if (!(type %in% 0:3)) stop("type must be 0, 1, 2 or 3!")
-  if (!(type %in% c(0,3)) && class(wn) != "list") stop("wn must be a list!")
-  if (!(type %in% c(0,3)) && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (!(type %in% c(0,3)) && class(w) != "list") stop("w must be a list!")
+  if (!(type %in% c(0,3)) && any(sapply(w, class) != "matrix")) stop("w must be a list of matrices!")
   if (type == 0) warning("Using uniform weights.")
   if (class(theta) != "list") stop("theta must be a list!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
@@ -827,19 +840,23 @@ lemie.mkde <- function(
   H <- as.numeric(sum(Hvec))
   d <- ncol(x)
   
-  # In type 1 we need to add the mixture distribution weights (these are already 
-  # implicit in the type 2 weight definition).
+  # Different types use different divisors in the estimator. Include these 
+  # divisors in the weights.
   if (type == 1) {
     l_mixture_weight <- log(Hvec) - log(H)
-    wn <- mapply(FUN = function(wi, m) {wi + m}, wn, l_mixture_weight, SIMPLIFY = FALSE)
+    w <- mapply(FUN = function(wi, m) {wi + m}, w, l_mixture_weight, SIMPLIFY = FALSE)
+  } else if (type == 2 && !normalised) {
+    w <- lapply(w, FUN = function(wi) {wi - log(H)})
+  } else if (type == 3 && !normalised) {
+    w <- w - log(H)
   }
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
   if (!(type %in% c(0, 3))) {
-    wn <- unlist(wn)
+    w <- unlist(w)
   } else if (type == 0) {
-    wn <- matrix(-log(H), H, 1)
+    w <- matrix(-log(H), H, 1)
   }
 
   #BW.eig <- eigen(BW)
@@ -863,7 +880,7 @@ lemie.mkde <- function(
       matrix(dmnorm(x.dist, sigma = BW, log = TRUE), length(chunk.inds), H),
       #matrix(mvtnorm::dmvnorm(x.dist, log = TRUE, checkSymmetry = FALSE), length(chunk.inds), H),
       MARGIN = 2,
-      STATS = c(wn),
+      STATS = c(w),
       FUN = "+",
       check.margin = FALSE
     )
@@ -901,13 +918,14 @@ lemie.mkde <- function(
 #' partial posterior.
 #' @param prob a probability, in [0, 1], corresponding to the quantile of 
 #' \code{FUN} to be estimated.
-#' @param wn a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
+#' @param w a list of matrices (for \code{type = 1} or \code{type = 2}) or a 
 #' matrix (\code{type = 3}), each containing normalised weights, one for each 
 #' sample in \code{theta} and obtained using the \code{\link{lemie.weights}} 
 #' function.
 #' @param FUN a matrix-valued function that we wish to estimate the expected 
 #' value of. See details.
 #' @param type an integer, either 1, 2 or 3, specifying the weighting type used.
+#' @param normalised logical. Are the weights self-normalised?
 #' @param tol a number specifying the tolerance level for convergence of 
 #' numerical root finding. See \code{\link{uniroot}} for details.
 #' @param Hvec an optional vector specifying the number of samples taken from 
@@ -920,34 +938,40 @@ lemie.mkde <- function(
 lemie.quantile <- function(
   theta,
   prob,
-  wn,
+  w,
   FUN = identity,
   type = 2,
+  normalised = TRUE,
   tol = .Machine$double.eps ^ 0.5,
   Hvec = NULL
 ) {
   if (class(theta) != "list") stop("theta must be a list!")
-  if (type != 3 && class(wn) != "list") stop("wn must be a list!")
+  if (type != 3 && class(w) != "list") stop("w must be a list!")
   if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
-  if (type != 3 && any(sapply(wn, class) != "matrix")) stop("wn must be a list of matrices!")
+  if (type != 3 && any(sapply(w, class) != "matrix")) stop("w must be a list of matrices!")
   if (!(type %in% 1:3)) stop("type must be 1, 2 or 3!")
   if (any(sapply(theta, ncol) != ncol(theta[[1]]))) stop("All matrices in theta must have the same number of columns!")
   
-  # In type 1 we need to add the mixture distribution weights (these are already 
-  # implicit in the type 2 weight definition).
+  # Different types use different divisors in the estimator. Include these 
+  # divisors in the weights.
+  if (is.null(Hvec)) {
+    Hvec <- sapply(theta, nrow)
+  } else if (length(Hvec) != length(theta)) {
+    stop("There should be one element of Hvec for each element of theta!")
+  }
+  H <- as.numeric(sum(Hvec))
   if (type == 1) {
-    if (is.null(Hvec)) {
-      Hvec <- sapply(theta, nrow)
-    } else if (length(Hvec) != length(theta)) {
-      stop("There should be one element of Hvec for each element of theta!")
-    }
-    l_mixture_weight <- log(Hvec) - log(sum(Hvec))
-    wn <- mapply(FUN = function(wi, m) {wi + m}, wn, l_mixture_weight, SIMPLIFY = FALSE)
+    l_mixture_weight <- log(Hvec) - log(H)
+    w <- mapply(FUN = function(wi, m) {wi + m}, w, l_mixture_weight, SIMPLIFY = FALSE)
+  } else if (type == 2 && !normalised) {
+    w <- lapply(w, FUN = function(wi) {wi - log(H)})
+  } else if (type == 3 && !normalised) {
+    w <- w - log(H)
   }
   
   # Collect samples and weights.
   theta <- abind::abind(theta, along = 1)
-  if (type != 3) wn <- abind::abind(wn, along = 1)
+  if (type != 3) w <- abind::abind(w, along = 1)
 
   # Check dimension of function output.
   d <- ncol(FUN(theta[1,,drop = FALSE]))
@@ -958,19 +982,19 @@ lemie.quantile <- function(
   for (j in 1:d) {
     fs <- FUN(theta)[,j]
     a <- min(fs)
-    fa <- lrowsums(wn[fs <= a]) - log(prob)
+    fa <- lrowsums(w[fs <= a]) - log(prob)
     if (fa > 0) {
       q.hat[,j] <- c(a, fa, 0, NA, 0)
       next
     }
     b <- max(fs)
-    fb <- lrowsums(wn[fs <= b]) - log(prob)
+    fb <- lrowsums(w[fs <= b]) - log(prob)
     if (fb < 0) {
       q.hat[,j] <- c(b, fb, 0, NA, 0)
       next
     }
     q.hat[,j] <- unsplit(uniroot(
-      function(z) {lrowsums(wn[fs <= z]) - log(prob)},
+      function(z) {lrowsums(w[fs <= z]) - log(prob)},
       lower = a,
       upper = b,
       tol = tol

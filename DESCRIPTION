@@ -1,7 +1,7 @@
 Package: parallelbayes
 Title: Bayesian computation from parallel sampling using distributed data
-Version: 0.5.0
-Date: 2022-10-13
+Version: 0.5.1
+Date: 2022-11-06
 Authors@R: person("Marc", "Box", email = "marc.box@protonmail.com", role = c("aut", "cre"))
 Description: Implementation of the Laplace enriched multiple importance 
     estimator (LEMIE) algorithm and alternatives, with examples. LEMIE 
@@ -9,6 +9,7 @@ Description: Implementation of the Laplace enriched multiple importance
     samples have been drawn (using MCMC, for example) from local posterior 
     distributions (those conditioned on isolated parts of the data).
 License: GPL (>=3)
+URL: https://github.com/mabox-source/parallelbayes
 Imports:
     abind (>= 1.4-5)
 Encoding: UTF-8

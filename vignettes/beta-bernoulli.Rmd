@@ -1,11 +1,11 @@
 ---
-title: "LEMIE Examples in the Beta-Bernoulli Model"
+title: "Examples with the Beta-Bernoulli Model"
 author: "Marc Box"
 date: "`r Sys.Date()`"
 output: rmarkdown::html_vignette
 bibliography: "references.bib"
 vignette: >
-  %\VignetteIndexEntry{LEMIE Examples in the Beta-Bernoulli Model}
+  %\VignetteIndexEntry{Examples with the Beta-Bernoulli Model}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -17,7 +17,12 @@ knitr::opts_chunk$set(
 )
 ```
 
-# LEMIE Examples in the Beta-Bernoulli Model
+# Examples with the Beta-Bernoulli Model
+
+This document reproduces the examples of Section 3.1 of @box2022importance.
+
+
+## The model
 
 The beta-Bernoulli model is 
 
@@ -34,9 +39,7 @@ distribution rather than the "fractionated" version.
 First we will look at the specific example of Scott et al 2016. Then we will 
 look at a more general example with a different rate parameter.
 
-## The example from Scott et al 2016
-
-Scott et al 2016's data set consists of 1,000 binary observations including a 
+The data of @scott2016bayes consists of 1,000 binary observations including a 
 single success and 999 failures. These are partitioned into 100 data shards.
 
 This is an interesting test for distributed computation because the success 
@@ -931,13 +934,7 @@ ess["SDPE"] <- mcmcse::ess(sdpe.out$theta.pooled)
 ```
 
 
+## Bibliography
 
-
-
-Close cluster, if used.
-
-```{r eval = FALSE}
-# NOT RUN
-spark_disconnect(sc)
-```
+* <a id="">Scott, Steven L., Blocker, A.W., Bonassi, F.V., Chipman, H.A., George, E.I. and McCulloch, R.E., 2016. Bayes and big data: The consensus Monte Carlo algorithm. \emph{International Journal of Management Science and Engineering Management}, 11(2), pp.78-88.</a>
 

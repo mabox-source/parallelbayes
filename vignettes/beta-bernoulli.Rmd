@@ -19,12 +19,25 @@ knitr::opts_chunk$set(
 
 # Examples with the Beta-Bernoulli Model
 
-This document reproduces the examples of Section 3.1 of @box2022importance.
+This document reproduces the examples of Section 3.1 of @box2022importance and 
+of Section 4.1 of @scott2016bayes. Section 1 explains the model, section 2 
+reproduces the example with a single positive outcome and section 3 reproduces 
+the example with 50%-50% positive and negative outcomes. Sections 2 and 3 
+initialise data and the partitioned data, generate samples from the posterior 
+and partial posterior distributions and employ the methods of 
+@box2022importance, @scott2016bayes and @neiswanger2013asymptotically to 
+approximate posterior inferences.
 
 
-## The model
+# The model
 
-The beta-Bernoulli model is 
+The beta-Bernoulli model is
+
+$$
+x_i \sim \mathrm{Bernoulli}\left(\lambda\right), i = 1,2,\ldots,n
+$$
+
+for $\lambda \in \left(0, 1\right)$.
 
 This is an example used in Scott et al 2016. Binary data is simulated and we 
 infer the rate parameter of a Bernoulli model, specifying a beta distribution 

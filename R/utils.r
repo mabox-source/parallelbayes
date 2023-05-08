@@ -40,7 +40,7 @@ lrowsums <- function (x, dim = 1, na.rm = FALSE, drop. = FALSE) {
     if (any(is.infinite(x) & x > 0)) warning("Inf values detected in x!")
     if (na.rm) x[is.na(x)] <- -Inf
 
-    if (class(x) == "array") {
+    if (class(x)[1] == "array") {
 	a <- dim(x)
 	if (dim > length(x)) stop("Invalid dim!")
 	M <- length(a)
@@ -50,7 +50,7 @@ lrowsums <- function (x, dim = 1, na.rm = FALSE, drop. = FALSE) {
 	s[max_x == -Inf] <- -Inf
 	a[dim] <- 1
 	dim(s) <- a
-    } else if (class(x) == "matrix") {
+    } else if (class(x)[1] == "matrix") {
     # Sum down columns.
 	if (dim == 1) {
 	    max_x <- apply(x, 2, max)
@@ -107,7 +107,7 @@ partition <- function(x,
     random = TRUE,
     balanced = FALSE
 ) {
-    orig_class <- class(x)
+    orig_class <- class(x)[1]
     orig_names <- unique(c(names(x), colnames(x)))
     x <- as.data.frame(x)
     n <- nrow(x)
@@ -329,7 +329,7 @@ dmnorm <- function(
   prec = NULL,
   log = FALSE
 ) {
-  if (class(x) != "matrix") x <- matrix(x, 1, length(x))
+  if (class(x)[1] != "matrix") x <- matrix(x, 1, length(x))
   if (is.null(prec)) prec <- solve(sigma)
   delta <- sweep(x, MARGIN = 2, STATS = mean, FUN = "-", check.margin = FALSE)
   dens <- -1 / 2 * determinant(2 * pi * sigma, logarithm = TRUE)$modulus - 1 / 2 * .rowSums(delta * t(tcrossprod(prec, delta)), nrow(x), ncol(x))

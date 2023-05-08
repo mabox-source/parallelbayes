@@ -163,7 +163,7 @@ lemie.weights <- function(
     use_spark <- FALSE
   }
   if (!use_spark) par <- parallel.start(par.clust, ncores, forking) 
-  if (any(sapply(theta, class) != "matrix")) stop("theta must be a list of matrices!")
+  if (any(sapply(theta, FUN = function(s) {class(s)[1]}) != "matrix")) stop("theta must be a list of matrices!")
   if (is.null(params)) {
     params <- list(
       Hvec = sapply(theta, nrow),
